@@ -42,3 +42,6 @@ export interface Segment {
   offsetY: number;
   offsetZ: number;
 }
+
+// On-screen name of a segment type: the block-stack location is a segment to the user.
+export const typeLabel = (t: string): string => (t === 'LANE' ? 'SEGMENT' : t);

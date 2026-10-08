@@ -5,6 +5,7 @@
   import { SEGMENTS_SUNDANCE } from './data/segmentsWarehouse5';
   import { SEGMENTS_BLOCK_STACK } from './data/blockStack';
   import type { Segment, SegmentType } from './types';
+  import { typeLabel } from './types';
 
   // The Sundance racking model plus the block-stack floor storage laid out
   // beside it (zones BSA/BSB/BSC, their lanes, and the BS drive aisle).
@@ -241,7 +242,7 @@
                 on:mouseenter={() => (activeSuggestion = i)}
               >
                 <span class="s-name"><strong>{s.fullName.slice(0, qLen)}</strong>{s.fullName.slice(qLen)}</span>
-                <span class="s-type" style="--t: {TYPE_COLORS[s.type]}">{s.type}</span>
+                <span class="s-type" style="--t: {TYPE_COLORS[s.type]}">{typeLabel(s.type)}</span>
               </button>
             </li>
           {/each}
@@ -261,7 +262,7 @@
           on:click={() => toggle(type)}
           title="{counts[type].toLocaleString()} {type.toLowerCase()}s - toggle overlay"
         >
-          <span class="dot"></span>{type}
+          <span class="dot"></span>{typeLabel(type)}
         </button>
       {/each}
     </div>

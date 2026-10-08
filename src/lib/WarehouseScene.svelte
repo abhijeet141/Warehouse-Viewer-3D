@@ -22,6 +22,7 @@
     type LanePod, type LaneStock, type PodStatus,
   } from '../data/blockStack';
   import type { Segment, SegmentType } from '../types';
+  import { typeLabel } from '../types';
 
   export let segments: Segment[];
   export let visibleTypes: Set<SegmentType>;
@@ -2271,7 +2272,7 @@
       transition:fade={{ duration: 140 }}
     >
       <div class="loc-name">{hoverInfo.fullName}</div>
-      <div class="loc-type">{hoverInfo.type}</div>
+      <div class="loc-type">{typeLabel(hoverInfo.type)}</div>
       <div class="loc-dims">
         <div class="dim"><span class="dim-axis">Width</span><span class="dim-val">{toMetres(hoverInfo.dims[0])}<span class="dim-u">m</span></span></div>
         <div class="dim"><span class="dim-axis">Depth</span><span class="dim-val">{toMetres(hoverInfo.dims[1])}<span class="dim-u">m</span></span></div>
