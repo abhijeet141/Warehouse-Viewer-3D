@@ -2291,7 +2291,7 @@
             <span class="ll-v">{ln.pods}<span class="ll-dim"> / {ln.maxPods}</span>{#if ln.allocated}<span class="ll-alloc">{ln.allocated} allocated</span>{/if}</span>
             <span class="ll-k">Layout</span><span class="ll-v">{ln.deep} deep × {ln.tiers} high</span>
             <span class="ll-k">Policy</span><span class="ll-v" class:ll-muted={!ln.tracked}>{ln.policy ?? 'untracked'}</span>
-            <span class="ll-k">{ln.tracked ? 'Class' : 'Holds'}</span>
+            <span class="ll-k">{ln.tracked ? 'Stock' : 'Holds'}</span>
             <span class="ll-v" class:ll-muted={ln.pods === 0}>{(ln.tracked ? ln.classLabel : ln.contents) ?? 'empty'}</span>
             {#if ln.face}<span class="ll-k">{ln.deep === 1 ? 'Top' : 'Face'}</span><span class="ll-v">{ln.face}</span>{/if}
           </div>

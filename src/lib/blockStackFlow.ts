@@ -342,9 +342,9 @@ export class BlockStackFlow {
     const mk = (id: string, label: string, hint: string, target: unknown): FlowScenario =>
       ({ id, label, hint: target ? hint : 'no matching pod in this stock', enabled: !!target });
     return [
-      mk('caseA', 'Case A · free pod', `Scan ${t.free?.face.code}: a free pod of the same class - the booking simply moves to it`, t.free),
+      mk('caseA', 'Case A · free pod', `Scan ${t.free?.face.code}: a free pod of the same stock group - the booking simply moves to it`, t.free),
       mk('caseB', 'Case B · booked pod', `Scan ${t.caseB?.face.code}: booked to ${t.caseB?.face.allocation?.order}, not started yet - that order is moved onto ${this.X?.code}`, t.caseB),
-      mk('hash', 'Other class', `Scan ${t.hash?.face.code}: a different class - not in the permitted set (2814)`, t.hash),
+      mk('hash', 'Other stock group', `Scan ${t.hash?.face.code}: a different stock group - not in the permitted set (2814)`, t.hash),
       mk('deep', 'Buried pod', `Scan ${t.deep?.face.code}: the allocated pod itself, under the stack - not reachable`, t.deep),
       mk('reserved', 'Reserved by a picker', `Scan ${t.reserved?.face.code}: another picker already holds its job - it is never moved (2818)`, t.reserved),
       mk('directed', 'Substitution off', `A rule without pod substitution (R-40), then scan ${t.free?.face.code} - refused (2815)`, t.free),
@@ -431,8 +431,8 @@ export class BlockStackFlow {
     for (const z of zones) this.host.glow(`zone:${z.fullName}`, segBox(z), COLORS.zone, 0.1, 0.8);
     this.host.focus(zones.map((z) => segBox(z)), { dir: [-0.35, 0.62, -0.55], duration: 1500 });
     this.set({
-      title: 'Block stack: one class of stock per segment',
-      body: 'Block-stack segments are deep and worked from one end, so whatever shares a segment must be interchangeable. Each zone carries one stock-mix policy - the attributes a pod must match to count as the same stock - and every segment holds one such class at a time.',
+      title: 'Block stack: one stock group per segment',
+      body: 'Block-stack segments are deep and worked from one end, so whatever shares a segment must be interchangeable. Each zone carries one stock-mix policy - the attributes a pod must match to count as the same stock - and every segment holds one such stock group at a time.',
       facts: [
         `BSD - ${this.zonePolicy('BSD')}: ${POLICIES[this.zonePolicy('BSD')!].label} (keys ${POLICIES[this.zonePolicy('BSD')!].keys.join(', ')})`,
         `BSE - ${this.zonePolicy('BSE')}: ${POLICIES[this.zonePolicy('BSE')!].label} (keys ${POLICIES[this.zonePolicy('BSE')!].keys.join(', ')})`,
@@ -446,22 +446,21 @@ export class BlockStackFlow {
   private enterPoliciesClasses() {
     const lanes = this.zoneLanes(ZONE);
     const policy = this.zonePolicy(ZONE);
-    const rows = lanes.map((s) => {
+    // Each segment glows in the colour of the stock it holds, so the groups read at a glance.
+    for (const s of lanes) {
       const face = s.pods[s.pods.length - 1];
       if (face) this.host.glow(`lane:${s.lane.fullName}`, laneBox(s), hslHex(face), 0.22, 0.85);
       else this.host.glow(`lane:${s.lane.fullName}`, laneBox(s), COLORS.empty, 0.06, 0.4);
-      return [s.lane.fullName, String(s.pods.length), s.classKey ? describeClassKey(s.classKey) : '- (empty)', s.classKey ? hashLabel(policy, s.classKey) : 'NULL'];
-    });
+    }
     const bank = this.host.segment(ZONE);
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.2, 0.75, 0.75], duration: 1400 });
     this.set({
-      title: 'Same stock or not: the class fingerprint',
-      body: `Every pod is fingerprinted on the policy's attributes. Under ${policy} (zone BSD) a Cola pod of batch B7 and one of batch B9 are two classes and can never share a segment; under BS-PRODUCT-ONLY (zone BSE) they are one class and may. Same pods, different fingerprints - the policy sets the balance between purity and density.`,
-      table: { head: ['Segment', 'Pods', 'Class', 'Hash'], rows },
+      title: 'What counts as the same stock',
+      body: `Every pod gets a fingerprint from the attributes its policy names. Pods with the same fingerprint are one stock group and may share a segment; pods with a different fingerprint never may. Under ${policy} two batches of one product are two stock groups; under BS-PRODUCT-ONLY they are one.`,
       facts: [
-        'The fingerprint is a SHA-256 of the pod\'s values for the policy\'s keys; magma-pods computes one per policy in play.',
-        'A pod carrying two batches is its own class - BSD04 can only ever share with an identical mixed pod.',
-        'An empty segment has no class (hash NULL): it takes the class of the first pod put into it and keeps it until it is empty again.',
+        'The fingerprint is a hash of the pod\'s values for the policy\'s keys.',
+        'A pod carrying two batches is a stock group of its own.',
+        'An empty segment has no stock group yet: it takes the group of the first pod put into it and keeps it until it is empty again.',
       ],
     });
   }
@@ -516,7 +515,7 @@ export class BlockStackFlow {
     this.putawayLane = null;
     const policy = this.zonePolicy(ZONE);
     const verdictText: Record<PutawayCandidate['verdict'], string> = {
-      'ok-empty': 'OK · empty (hash NULL)', 'ok-same': 'OK · same class', 'drop-class': 'dropped · class differs', 'drop-full': 'dropped · segment full',
+      'ok-empty': 'OK · empty (hash NULL)', 'ok-same': 'OK · same stock group', 'drop-class': 'dropped · stock group differs', 'drop-full': 'dropped · segment full',
     };
     const rows = this.candidates.map((c) => [
       c.lane.fullName, `${c.stock.pods.length}/${c.lane.lane!.maxPods}`,
@@ -532,10 +531,10 @@ export class BlockStackFlow {
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.15, 0.7, 0.8], duration: 1300 });
     this.set({
       title: 'The rule says zone BSD; the stock-mix gate filters its segments',
-      body: `The putaway rule routes the pod to zone BSD, as it always has. Each candidate segment is then checked on its own: tracking off → accept; empty → accept; same class under the segment's policy → accept; a different class → dropped. The segments that pass are taken in the zone's putaway order and the first one wins - ${this.engineLane?.fullName ?? 'none'}${this.candidates.find((c) => c.lane === this.engineLane)?.verdict === 'ok-same' ? ', which already holds this class' : ''}.`,
+      body: `The putaway rule routes the pod to zone BSD, as it always has. Each candidate segment is then checked on its own: tracking off → accept; empty → accept; same stock group under the segment's policy → accept; a different stock group → dropped. The segments that pass are taken in the zone's putaway order and the first one wins - ${this.engineLane?.fullName ?? 'none'}${this.candidates.find((c) => c.lane === this.engineLane)?.verdict === 'ok-same' ? ', which already holds this stock group' : ''}.`,
       table: { head: ['Segment', 'Pods', 'Holds', 'Verdict'], rows, mark: this.candidates.map((c, i) => (c.lane === this.engineLane ? i : -1)).filter((i) => i >= 0) },
       facts: [
-        `GI-2041's class under ${policy}: ${this.classText(policy, pod.classKey)}.`,
+        `GI-2041's stock group under ${policy}: ${this.classText(policy, pod.classKey)}.`,
         'Capacity is checked as well: the segment\'s pod count + 1 must not exceed its maximum.',
         'The engine does not prefer a part-filled segment over an empty one: purity is guaranteed, density is a configuration choice (putaway order, home locations).',
       ],
@@ -561,14 +560,14 @@ export class BlockStackFlow {
     if (c.verdict === 'drop-class') {
       const policy = this.zonePolicy(ZONE);
       this.notice('deny', 'Refused - stock-mix policy (error 1942)',
-        `${name} holds ${this.classText(policy, c.stock.classKey!)}; GI-2041 is ${this.classText(policy, pod.classKey)}. Two classes cannot share a tracked segment: the reservation engine drops the segment, and even a forced move would be refused by the stock write itself - "Segment may only hold stock matching on [product, batch]".`);
+        `${name} holds ${this.classText(policy, c.stock.classKey!)}; GI-2041 is ${this.classText(policy, pod.classKey)}. Two stock groups cannot share a tracked segment: the reservation engine drops the segment, and even a forced move would be refused by the stock write itself - "Segment may only hold stock matching on [product, batch]".`);
       return;
     }
     this.putawayLane = c.lane;
-    this.notice('ok', c.verdict === 'ok-empty' ? `${name} accepted - empty segment` : `${name} accepted - same class`,
+    this.notice('ok', c.verdict === 'ok-empty' ? `${name} accepted - empty segment` : `${name} accepted - same stock group`,
       c.verdict === 'ok-empty'
-        ? `${name} has no class yet. Any class may open it; on confirm the segment is stamped with ${hashLabel(this.zonePolicy(ZONE), pod.classKey)}.`
-        : `${name} already holds ${describeClassKey(c.stock.classKey!)} - the same class as GI-2041, so the segment stays pure.`);
+        ? `${name} has no stock group yet. Any stock group may open it; on confirm the segment is stamped with ${hashLabel(this.zonePolicy(ZONE), pod.classKey)}.`
+        : `${name} already holds ${describeClassKey(c.stock.classKey!)} - the same stock group as GI-2041, so the segment stays pure.`);
     this.set({ needsChoice: false, nextLabel: 'Reserve and move' });
     if (get(flowState).auto) this.scheduleAuto();
     else this.goto(this.i + 1);
@@ -651,7 +650,7 @@ export class BlockStackFlow {
     this.host.focus([laneBox(stock)], { dir: [-0.55, 0.5, lane.lane!.faceDir * 0.65], duration: 1400, aisle: this.host.segment(AISLE) });
     this.set({
       title: 'Putaway confirmed',
-      body: 'The confirm writes the pod into the segment, and every stock write passes one gate in magma-pods that recomputes the segment\'s classes. One class → the segment\'s hash is stamped or left unchanged; two → the write is refused (1942); none → the hash is cleared. Putaway, moves and stock edits all pass the same gate, so nothing else needs to know the rule.',
+      body: 'The confirm writes the pod into the segment, and every stock write passes one gate in magma-pods that recomputes the segment\'s stock groups. One stock group → the segment\'s hash is stamped or left unchanged; two → the write is refused (1942); none → the hash is cleared. Putaway, moves and stock edits all pass the same gate, so nothing else needs to know the rule.',
       ledger: this.putawayLedger,
       facts: [
         `Pod count ${stock.pods.length - 1} → ${stock.pods.length} of ${lane.lane!.maxPods}.`,
@@ -716,7 +715,7 @@ export class BlockStackFlow {
       body: `Oldest first lands on ${X.code}: the first pod put into ${X.lane}, so it stands at the back of the segment on the floor with ${buried}${toppedUp ? ` (GI-2041, now ${this.newPod!.code}, among them)` : ''}. The engine cannot know that - allocation has no notion of depth. Pick job ${ORDER.job} is created against ${X.code} with substitution allowed, and the picker is now owed a pod nobody can reach.`,
       ledger: lines,
       facts: [
-        `Zone totals for class ${describeClassKey(X.classKey)}: AVAILABLE −${ORDER.qty}, ALLOCATED +${ORDER.qty}; the physical total does not change.`,
+        `Zone totals for stock group ${describeClassKey(X.classKey)}: AVAILABLE −${ORDER.qty}, ALLOCATED +${ORDER.qty}; the physical total does not change.`,
         'Block stack does not change allocation; it makes the depth problem harmless at the point of pick.',
       ],
     });
@@ -762,7 +761,7 @@ export class BlockStackFlow {
     this.host.chase(1500, aisle);
     this.set({
       title: 'Picking: start-pick lists the segments the picker may use',
-      body: `The picker takes ${job.id}: it is reserved to them, and the pick list now carries the substitutable set - the segments of zone BSD holding the same class under the same policy, in a pickable status. The job's own segment comes first, then the segment with the fewest pods, then the nearest; never more than the policy's cap of 10.`,
+      body: `The picker takes ${job.id}: it is reserved to them, and the pick list now carries the substitutable set - the segments of zone BSD holding the same stock group under the same policy, in a pickable status. The job's own segment comes first, then the segment with the fewest pods, then the nearest; never more than the policy's cap of 10.`,
       table: {
         head: ['Segment', 'Pods', 'Face pod', 'Face status'],
         rows: this.subSet.map((e) => [
@@ -771,7 +770,7 @@ export class BlockStackFlow {
         ]),
       },
       facts: [
-        `BSD03 is not in the set: it holds ${describeClassKey('4471|B9')}, a different class. The set is pure by construction, which is what makes substitution safe.`,
+        `BSD03 is not in the set: it holds ${describeClassKey('4471|B9')}, a different stock group. The set is pure by construction, which is what makes substitution safe.`,
         'Scope is set per policy: this segment only, this zone, or the whole warehouse (new) - the job\'s zone first, other zones after, up to the cap.',
         'The list is advisory: the handheld validates scans against it, and every check is run again at confirm.',
       ],
@@ -804,7 +803,7 @@ export class BlockStackFlow {
       facts: [
         `Case A: the scanned pod has enough free stock - it takes the booking and ${X.code} is released.`,
         `Case B: the scanned pod is booked to another order nobody has started - that order is moved onto ${X.code}, provided its own rule accepts it. One move, no chain reaction.`,
-        'Checks, in order: the job may swap (rule flag) → the pod is in the permitted set → same class, fingerprinted again → enough stock, Case A or B → both order lines accept their new pods (allocation\'s own check).',
+        'Checks, in order: the job may swap (rule flag) → the pod is in the permitted set → same stock group, fingerprinted again → enough stock, Case A or B → both order lines accept their new pods (allocation\'s own check).',
       ],
       prompt: `Click a face pod - green = free, amber = booked to another order - or pick a scenario below and the flow scans the right pod for you.`,
       scenarios: this.computeScenarios(),
@@ -837,8 +836,8 @@ export class BlockStackFlow {
     if (Y.code === X.code) return { kind: 'proposed', text: `${X.code} is itself the face pod of ${X.lane}: pick it as allocated - no swap needed.` };
     if (!job.podSubstitution) return { kind: 'deny', reason: 'substitution off (2815)', text: `Job ${job.id} was allocated under ${job.rule}: pod substitution is off, so only ${X.code} may be picked. The handheld offers no alternatives for such a job.` };
     if (cfgY.block !== job.zone) return { kind: 'deny', reason: 'outside the permitted set (2814)', text: `${Y.code} stands in zone ${cfgY.block}. The policy's scope is the job's zone (${job.zone}), so segments elsewhere are never offered; with warehouse scope they would be, up to the cap.` };
-    if (!cfgY.trackStockMix) return { kind: 'deny', reason: 'untracked segment (2814)', text: `${Y.lane} is not stock-mix tracked, so it has no class to compare and is never in the set.` };
-    if (Y.classKey !== X.classKey) return { kind: 'deny', reason: 'different class (2814)', text: `${Y.lane} holds ${this.classText(cfgY.policy, Y.classKey)}; the job's class is ${this.classText(cfgY.policy, X.classKey)}. The segment is not in the permitted set, so the scan is refused - and at confirm both pods are fingerprinted again (2816 if they differ).` };
+    if (!cfgY.trackStockMix) return { kind: 'deny', reason: 'untracked segment (2814)', text: `${Y.lane} is not stock-mix tracked, so it has no stock group to compare and is never in the set.` };
+    if (Y.classKey !== X.classKey) return { kind: 'deny', reason: 'different stock group (2814)', text: `${Y.lane} holds ${this.classText(cfgY.policy, Y.classKey)}; the job's stock group is ${this.classText(cfgY.policy, X.classKey)}. The segment is not in the permitted set, so the scan is refused - and at confirm both pods are fingerprinted again (2816 if they differ).` };
     if (job.requiredBatch && !Y.batches.includes(job.requiredBatch)) return { kind: 'deny', reason: 'the order line does not accept it (2817)', text: `The order line requires batch ${job.requiredBatch}; ${Y.code} carries ${Y.batches.join('+')}.` };
     const avail = podAvailable(Y);
     if (avail >= job.qty) return { kind: 'caseA', text: `Case A - ${Y.code} has ${avail} free and the job needs ${job.qty}. On confirm: ${Y.code} AVAILABLE → ALLOCATED {${job.order} · ${job.id}}, ${X.code} ALLOCATED → AVAILABLE, and ${job.id} is re-pointed to ${Y.code} in ${Y.lane}. No pod moves, so the segment-mixing check never fires.` };
@@ -846,7 +845,7 @@ export class BlockStackFlow {
     if (a) {
       if (a.jobStatus === 'RESERVED') return { kind: 'deny', reason: 'booked to a job already in progress (2818)', text: `${Y.code} is booked to ${a.order} and its job ${a.job} is reserved by another picker. A job someone is already working on is never moved.` };
       if (a.jobStatus === 'COMPLETE') return { kind: 'deny', reason: 'already picked', text: `${Y.code}'s booking ${a.job} is complete.` };
-      if (avail + a.qty >= job.qty && X.cases >= a.qty) return { kind: 'caseB', displaced: a, text: `Case B - ${Y.code} is booked to ${a.order} (${a.qty} cases, job ${a.job} not started). On confirm ${a.order} is moved onto ${X.code} - same class, ${X.cases} cases, and its rule accepts it - and ${Y.code} is booked to ${job.order} instead. Had ${a.order} not accepted ${X.code}, the whole swap would be refused; nothing is ever half-done.` };
+      if (avail + a.qty >= job.qty && X.cases >= a.qty) return { kind: 'caseB', displaced: a, text: `Case B - ${Y.code} is booked to ${a.order} (${a.qty} cases, job ${a.job} not started). On confirm ${a.order} is moved onto ${X.code} - same stock group, ${X.cases} cases, and its rule accepts it - and ${Y.code} is booked to ${job.order} instead. Had ${a.order} not accepted ${X.code}, the whole swap would be refused; nothing is ever half-done.` };
       return { kind: 'deny', reason: 'not enough stock, even after moving the other order (2818)', text: `${Y.code} offers ${avail} free + ${a.qty} that could be moved = ${avail + a.qty}, below the ${job.qty} needed.` };
     }
     return { kind: 'deny', reason: 'not enough stock on the pod (2818)', text: `${Y.code} has only ${avail} cases free; the job needs ${job.qty} and there is no booking on it that could be moved.` };
@@ -1007,11 +1006,11 @@ export class BlockStackFlow {
     else outcome = '';
     this.set({
       title: 'Pick complete',
-      body: `${outcome} Allocation decided the class; the picker took any pod of that class; the swap made the records agree with the picker's hands and refused only where another order would have been left worse off. Segments stayed pure throughout - substitution re-labels stock, it never moves a pod between segments.`,
-      table: { head: ['Segment', 'Pods', 'Class', 'Booked'], rows },
+      body: `${outcome} Allocation decided the stock group; the picker took any pod of that stock group; the swap made the records agree with the picker's hands and refused only where another order would have been left worse off. Segments stayed pure throughout - substitution re-labels stock, it never moves a pod between segments.`,
+      table: { head: ['Segment', 'Pods', 'Stock group', 'Booked'], rows },
       ledger: this.ledgerAll,
       facts: [
-        'Invariant: allocation and the swap never change AVAILABLE + ALLOCATED per class; only the pick reduces it.',
+        'Invariant: allocation and the swap never change AVAILABLE + ALLOCATED per stock group; only the pick reduces it.',
         'Also covered: a job allocated from HELD or RECEIPTED stock swaps only onto free stock of the same kind, and a whole-pod job may take a bigger pod when that pod may be broken (the job becomes a case pick).',
         'Outside this release: replenishment picks from block stack (movement jobs).',
       ],
