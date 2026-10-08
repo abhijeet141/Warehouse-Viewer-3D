@@ -23,8 +23,6 @@ export interface FlowTable { head: string[]; rows: string[][]; mark?: number[] }
 export interface FlowNotice { kind: 'ok' | 'deny' | 'info'; title: string; text: string }
 // One-click set-ups for the scan step (each is a pallet the flow scans for you).
 export interface FlowScenario { id: string; label: string; hint: string; enabled: boolean }
-// Live stock ledger for the story zone, one row per class (cases).
-export interface ZoneTotal { label: string; hash: string; pallets: number; available: number; allocated: number; story: boolean }
 
 export interface FlowState {
   active: boolean;
@@ -48,8 +46,6 @@ export interface FlowState {
   follow: boolean;           // camera rides with the truck
   speed: number;
   scenarios: FlowScenario[];
-  totals: ZoneTotal[];
-  totalsZone: string;
 }
 
 function initialState(): FlowState {
@@ -58,7 +54,7 @@ function initialState(): FlowState {
     title: '', body: '', facts: [], table: null, ledger: [], notice: null, prompt: null,
     status: '', busy: false, paused: false, needsChoice: false, nextLabel: 'Next', isLast: false,
     auto: false, follow: true, speed: 1,
-    scenarios: [], totals: [], totalsZone: 'BSD',
+    scenarios: [],
   };
 }
 
@@ -356,27 +352,6 @@ export class BlockStackFlow {
     ];
   }
 
-  // Cases per class in the story zone: what allocation and the swap re-label and
-  // what only the pick reduces (T = A + L).
-  private computeTotals(): ZoneTotal[] {
-    const policy = this.zonePolicy(ZONE);
-    const storyKey = this.newPod?.classKey ?? classKeyFor(NEW_POD.product, [NEW_POD.batch], policy);
-    const acc = new Map<string, ZoneTotal>();
-    for (const s of this.zoneLanes(ZONE)) {
-      for (const p of s.pods) {
-        let t = acc.get(p.classKey);
-        if (!t) {
-          t = { label: describeClassKey(p.classKey), hash: hashLabel(policy, p.classKey), pallets: 0, available: 0, allocated: 0, story: p.classKey === storyKey };
-          acc.set(p.classKey, t);
-        }
-        t.pallets++;
-        t.available += podAvailable(p);
-        t.allocated += p.allocation?.qty ?? 0;
-      }
-    }
-    return [...acc.values()].sort((a, b) => (a.story === b.story ? b.pallets - a.pallets : a.story ? -1 : 1));
-  }
-
   // Dev hook: a lane name or a pallet code.
   chooseByName(name: string) {
     const stock = this.host.laneStock();
@@ -388,7 +363,7 @@ export class BlockStackFlow {
 
   // ---- state helpers -----------------------------------------------------------
 
-  private set(patch: Partial<FlowState>) { flowState.update((s) => ({ ...s, ...patch, totals: this.computeTotals(), totalsZone: ZONE })); }
+  private set(patch: Partial<FlowState>) { flowState.update((s) => ({ ...s, ...patch })); }
   private notice(kind: FlowNotice['kind'], title: string, text: string) { this.set({ notice: { kind, title, text } }); }
   private clearTimer() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } }
 

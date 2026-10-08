@@ -107,20 +107,6 @@
         {#each st.facts as f}<li>{f}</li>{/each}
       </ul>
     {/if}
-
-    {#if st.totals.length}
-      <!-- Live ledger for the story zone: allocation and swap only move cases between
-           AVAILABLE and ALLOCATED; only the pick changes T. -->
-      <div class="fp-totals">
-        <div class="tt-row tt-head"><span>Zone {st.totalsZone} · class</span><span>Pods</span><span>Avail</span><span>Alloc</span><span>Total</span></div>
-        {#each st.totals as t (t.label)}
-          <div class="tt-row" class:story={t.story}>
-            <span>{t.label} <i>{t.hash}</i></span><span>{t.pallets}</span><span>{t.available}</span><span>{t.allocated}</span><span>{t.available + t.allocated}</span>
-          </div>
-        {/each}
-        <div class="tt-note">cases · Total = Available + Allocated</div>
-      </div>
-    {/if}
   </div>
 
   <footer class="fp-foot">
@@ -283,18 +269,6 @@
   .fs-btn:disabled { opacity: 0.4; cursor: default; }
 
   /* Zone ledger */
-  .fp-totals {
-    margin-top: 12px; padding: 8px 10px 6px; border-radius: 10px;
-    background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.28);
-    font-family: ui-monospace, Menlo, monospace; font-size: 10.5px;
-  }
-  .tt-row { display: grid; grid-template-columns: 2.4fr 0.8fr 0.8fr 0.8fr 0.7fr; gap: 6px; padding: 3px 0; align-items: baseline; color: #cbd5e1; }
-  .tt-row span:not(:first-child) { text-align: right; }
-  .tt-head span { font-size: 9px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
-  .tt-row.story { color: #fde68a; font-weight: 700; }
-  .tt-row i { font-style: normal; color: #64748b; font-weight: 400; margin-left: 4px; }
-  .tt-row.story i { color: #b45309; }
-  .tt-note { margin-top: 4px; font-size: 9px; letter-spacing: 0.4px; color: #64748b; text-align: right; }
 
   .fp-foot { padding: 8px 14px 12px; border-top: 1px solid rgba(148, 163, 184, 0.14); display: flex; flex-direction: column; gap: 8px; }
   .fp-status { display: flex; align-items: center; gap: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #cbd5e1; }

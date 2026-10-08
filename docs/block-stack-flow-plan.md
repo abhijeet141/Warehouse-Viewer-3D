@@ -119,9 +119,6 @@ truck animated by `__flow.step(dt)`:
   outcome (the pallet-directed one flips the job's rule to R-40 for the scan, then restores it).
   Two fixture lanes make every scenario reachable: BSD05 (three B7 pallets, face booked to
   ORD-1017 whose job is RESERVED) and BSD06 (three B7 pallets, 12-case face).
-- **Zone ledger** at the foot of the panel: pallets, AVAILABLE, ALLOCATED and T per class in
-  zone BSD, recomputed on every state change so allocation and the swap visibly re-label cases
-  while T only moves at the pick.
 - **Picker's view**: walk-mode camera beside the truck at 1.7 m, facing the lane; the forklift
   keeps working in either camera; Overview returns to the chase camera.
 - **Pause/Resume** for the forklift (main button while it moves, or Space); the hands-free toggle
