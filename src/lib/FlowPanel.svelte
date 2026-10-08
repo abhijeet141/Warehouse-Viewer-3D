@@ -136,7 +136,7 @@
       <button class="fp-btn" class:on={st.follow} on:click={() => dispatch('follow')} title="Camera rides with the truck">Follow</button>
       {#if truckOut}
         <button class="fp-btn" class:on={pov} on:click={() => dispatch('pov')}
-          title={pov ? 'Back to the overview camera' : "Stand beside the truck at eye height — drag to look, W/S to walk, Q/E for height"}>
+          title={pov ? 'Back to the overview camera' : "Stand beside the truck at eye height - drag to look, W/S to walk, Q/E for height"}>
           {pov ? 'Overview' : "Picker's view"}
         </button>
       {/if}

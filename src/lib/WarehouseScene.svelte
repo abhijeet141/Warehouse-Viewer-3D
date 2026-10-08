@@ -2432,7 +2432,7 @@
         </div>
         <div class="lp-loc-body">
           {#if si.pods.length === 0}
-            <div class="lp-loc-row bs-row"><span class="lp-code">—</span><span class="lp-cellxyz">nothing stacked to this level yet</span><span></span><span></span></div>
+            <div class="lp-loc-row bs-row"><span class="lp-code">-</span><span class="lp-cellxyz">nothing stacked to this level yet</span><span></span><span></span></div>
           {/if}
           {#each si.pods as p (p.code)}
             <div class="lp-loc-row bs-row">
@@ -2454,7 +2454,7 @@
         {#if tourActive}<span class="ab-tour"><span class="ab-dot"></span>{tourPaused ? 'Paused' : 'Tour'}</span>{/if}
       </div>
       {#key aisleLabel}
-        <div class="ab-letter" in:scale={{ duration: 220, start: 0.7 }}>{aisleLabel || '—'}</div>
+        <div class="ab-letter" in:scale={{ duration: 220, start: 0.7 }}>{aisleLabel || '-'}</div>
       {/key}
       {#if aisleZones}<div class="ab-zones">{aisleZones}</div>{/if}
       <div class="ab-count">{aisleIndex + 1}<span class="ab-sep">/</span>{aisleTotal}</div>

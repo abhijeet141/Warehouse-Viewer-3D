@@ -259,7 +259,7 @@
           class:active={visibleTypes.has(type)}
           style="--chip-color: {TYPE_COLORS[type]}"
           on:click={() => toggle(type)}
-          title="{counts[type].toLocaleString()} {type.toLowerCase()}s — toggle overlay"
+          title="{counts[type].toLocaleString()} {type.toLowerCase()}s - toggle overlay"
         >
           <span class="dot"></span>{type}
         </button>
@@ -310,7 +310,7 @@
           class="toggle shell-btn"
           class:active={showShell}
           on:click={() => (showShell = !showShell)}
-          title="Show or hide the building shell — roof, walls, columns and lights"
+          title="Show or hide the building shell - roof, walls, columns and lights"
         >
           <svg class="t-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 11 V20 H19 V11" />
