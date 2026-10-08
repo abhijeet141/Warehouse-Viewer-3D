@@ -748,12 +748,12 @@
     if (chaseClamp) toPos.z = Math.min(Math.max(toPos.z, chaseClamp.zMin), chaseClamp.zMax);
     cageClampPos(toPos);
     cageClampTarget(center);
-    // A long flight gets more time (60 m/s), so a hop across the floor never whips the view.
+    // A long flight gets more time (45 m/s), so a hop across the floor never whips the view.
     const flight = toPos.distanceTo(perspectiveCamera.position);
     camTween = {
       fromPos: perspectiveCamera.position.clone(), fromTarget: controls.target.clone(),
       toPos, toTarget: center,
-      start: performance.now(), duration: Math.max(opts.duration ?? 1300, Math.min(2600, flight / 60)), bow: 0,
+      start: performance.now(), duration: Math.max(opts.duration ?? 1300, Math.min(3200, flight / 45)), bow: 0,
     };
   }
 
