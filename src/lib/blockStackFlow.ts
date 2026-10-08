@@ -487,7 +487,7 @@ export class BlockStackFlow {
     const keyProd = classKeyFor(product.code, [NEW_POD.batch], 'BS-PRODUCT-ONLY');
     this.set({
       title: 'Putaway: a pod arrives',
-      body: `Goods-in has receipted pod GI-2041: ${NEW_POD.cases} cases of ${product.code} ${product.name}, batch ${NEW_POD.batch}. Before any segment is considered, putaway fingerprints the pod once per policy in play for this warehouse and account, and the fingerprints travel with the reservation request.`,
+      body: `Goods-in has receipted pod GI-2041: ${NEW_POD.cases} cases of product ${product.code}, batch ${NEW_POD.batch}. Before any segment is considered, putaway fingerprints the pod once per policy in play for this warehouse and account, and the fingerprints travel with the reservation request.`,
       facts: [
         `Under BS-PRODUCT-BATCH → ${this.classText('BS-PRODUCT-BATCH', keyBatch)}`,
         `Under BS-PRODUCT-ONLY → ${this.classText('BS-PRODUCT-ONLY', keyProd)}`,
@@ -515,7 +515,7 @@ export class BlockStackFlow {
     this.putawayLane = null;
     const policy = this.zonePolicy(ZONE);
     const verdictText: Record<PutawayCandidate['verdict'], string> = {
-      'ok-empty': 'OK · empty (hash NULL)', 'ok-same': 'OK · same stock group', 'drop-class': 'dropped · stock group differs', 'drop-full': 'dropped · segment full',
+      'ok-empty': 'OK · empty', 'ok-same': 'OK · same stock group', 'drop-class': 'dropped · stock group differs', 'drop-full': 'dropped · segment full',
     };
     const rows = this.candidates.map((c) => [
       c.lane.fullName, `${c.stock.pods.length}/${c.lane.lane!.maxPods}`,
@@ -536,7 +536,7 @@ export class BlockStackFlow {
       facts: [
         `GI-2041's stock group under ${policy}: ${this.classText(policy, pod.classKey)}.`,
         'Capacity is checked as well: the segment\'s pod count + 1 must not exceed its maximum.',
-        'The engine does not prefer a part-filled segment over an empty one: purity is guaranteed, density is a configuration choice (putaway order, home locations).',
+        'Among the segments that pass, the zone\'s putaway order decides; a product with a home location is placed nearest to it.',
       ],
       prompt: `Click a segment in BSD to put GI-2041 there - the engine's own choice is outlined. Try a red segment to see the refusal.`,
       needsChoice: true,
@@ -654,7 +654,7 @@ export class BlockStackFlow {
       ledger: this.putawayLedger,
       facts: [
         `Pod count ${stock.pods.length - 1} → ${stock.pods.length} of ${lane.lane!.maxPods}.`,
-        'A tracked segment whose policy cannot be resolved is reported, never filled by guessing.',
+        'A tracked segment with no policy assigned is left out of putaway and reported until one is set.',
       ],
     });
   }
@@ -671,9 +671,9 @@ export class BlockStackFlow {
     const lanesWith = new Set(cands.map((c) => c.pod.lane)).size;
     this.set({
       title: 'Allocation: an order arrives',
-      body: `${ORDER.id} wants ${ORDER.qty} cases of 4471 Cola. Rule ${ORDER.rule.split(' · ')[0]} (consumer orders) allocates from zone BSD, oldest stock first, and allows pod substitution. Allocation books stock on one named pod - AVAILABLE becomes ALLOCATED - it creates nothing and moves nothing.`,
+      body: `${ORDER.id} wants ${ORDER.qty} cases of product 4471. Rule ${ORDER.rule.split(' · ')[0]} (consumer orders) allocates from zone BSD, oldest stock first, and allows pod substitution. Allocation books stock on one named pod - AVAILABLE becomes ALLOCATED - it creates nothing and moves nothing.`,
       facts: [
-        `${cands.length} AVAILABLE Cola pods in ${lanesWith} segments of BSD are eligible - batches B7, B9, B11 and the mixed pod alike; the order line does not pin a batch.`,
+        `${cands.length} AVAILABLE pods of product 4471 in ${lanesWith} segments of BSD are eligible, whatever their batch; the order line does not pin one.`,
         'The rule\'s "allow pod substitution" flag is copied onto the pick job it creates, so the job keeps that permission even if the rule changes later.',
         'Allocation itself is unchanged by block stack.',
       ],
@@ -711,12 +711,12 @@ export class BlockStackFlow {
     const toppedUp = this.putawayLane?.fullName === X.lane;
     const buried = `${plural(above, 'pod')} stacked on it${inFront ? ` and ${plural(inFront, 'pod')} in front of it` : ''}`;
     this.set({
-      title: `The engine names ${X.code} - it has no depth model`,
-      body: `Oldest first lands on ${X.code}: the first pod put into ${X.lane}, so it stands at the back of the segment on the floor with ${buried}${toppedUp ? ` (GI-2041, now ${this.newPod!.code}, among them)` : ''}. The engine cannot know that - allocation has no notion of depth. Pick job ${ORDER.job} is created against ${X.code} with substitution allowed, and the picker is now owed a pod nobody can reach.`,
+      title: `Allocation names ${X.code}, the oldest pod`,
+      body: `Oldest first lands on ${X.code}: the first pod put into ${X.lane}, so it stands at the back of the segment on the floor with ${buried}${toppedUp ? ` (GI-2041, now ${this.newPod!.code}, among them)` : ''}. Pick job ${ORDER.job} is created against ${X.code} with substitution allowed, so the picker may take any pod of the same stock group instead of digging for this one.`,
       ledger: lines,
       facts: [
         `Zone totals for stock group ${describeClassKey(X.classKey)}: AVAILABLE −${ORDER.qty}, ALLOCATED +${ORDER.qty}; the physical total does not change.`,
-        'Block stack does not change allocation; it makes the depth problem harmless at the point of pick.',
+        'Allocation works exactly as before; substitution takes over at the point of pick.',
       ],
     });
   }
@@ -831,7 +831,7 @@ export class BlockStackFlow {
     const face = stockY.pods[stockY.pods.length - 1];
     if (!face || face.code !== Y.code) {
       const after = stockY.pods.length - Y.index;
-      return { kind: 'deny', reason: 'buried, not reachable', text: `${Y.code} is position ${Y.index} of ${cfgY.maxPods} in ${Y.lane} with ${plural(after, 'pod')} stacked after it. Only the face pod${face ? ` (${face.code})` : ''} can be scanned - the system has no depth model; the picker's hands do.` };
+      return { kind: 'deny', reason: 'buried, not reachable', text: `${Y.code} is position ${Y.index} of ${cfgY.maxPods} in ${Y.lane} with ${plural(after, 'pod')} stacked after it. Only the face pod${face ? ` (${face.code})` : ''} can be reached and scanned.` };
     }
     if (Y.code === X.code) return { kind: 'proposed', text: `${X.code} is itself the face pod of ${X.lane}: pick it as allocated - no swap needed.` };
     if (!job.podSubstitution) return { kind: 'deny', reason: 'substitution off (2815)', text: `Job ${job.id} was allocated under ${job.rule}: pod substitution is off, so only ${X.code} may be picked. The handheld offers no alternatives for such a job.` };
@@ -1012,7 +1012,6 @@ export class BlockStackFlow {
       facts: [
         'Invariant: allocation and the swap never change AVAILABLE + ALLOCATED per stock group; only the pick reduces it.',
         'Also covered: a job allocated from HELD or RECEIPTED stock swaps only onto free stock of the same kind, and a whole-pod job may take a bigger pod when that pod may be broken (the job becomes a case pick).',
-        'Outside this release: replenishment picks from block stack (movement jobs).',
       ],
       nextLabel: 'Restart',
       status: 'Truck back at the marshalling bay.',
