@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse 3D View · Block Stack</title>
+    <!-- Inline so it paints on the very first frame, before the bundled CSS/JS
+         loads — the loader masks the whole startup so there's no white flash. -->
+    <style>
+      html, body, #app { margin: 0; height: 100%; background: #dde3ea; }
+      #loader {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #dde3ea;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        opacity: 1;
+        transition: opacity 0.55s ease;
+      }
+      #loader.hide { opacity: 0; pointer-events: none; }
+      #loader .rack { width: 132px; height: auto; }
+      #loader .box { animation: ld-fill 1.9s ease-in-out infinite; transform-box: fill-box; transform-origin: center bottom; }
+      #loader .box:nth-child(1) { animation-delay: 0s; }
+      #loader .box:nth-child(2) { animation-delay: 0.16s; }
+      #loader .box:nth-child(3) { animation-delay: 0.32s; }
+      #loader .box:nth-child(4) { animation-delay: 0.48s; }
+      #loader .box:nth-child(5) { animation-delay: 0.64s; }
+      #loader .box:nth-child(6) { animation-delay: 0.8s; }
+      @keyframes ld-fill {
+        0%        { opacity: 0.12; transform: translateY(5px) scaleY(0.7); }
+        28%, 64%  { opacity: 1;    transform: translateY(0)   scaleY(1); }
+        100%      { opacity: 0.12; transform: translateY(5px) scaleY(0.7); }
+      }
+      #loader .ld-text { text-align: center; }
+      #loader .ld-title { font-size: 19px; font-weight: 600; color: #0f172a; letter-spacing: 0.3px; }
+      #loader .ld-sub {
+        margin-top: 5px; font-size: 12px; letter-spacing: 0.4px; color: #64748b;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      #loader .ld-bar {
+        position: relative; width: 190px; height: 4px; border-radius: 999px;
+        background: #c3ccd6; overflow: hidden;
+      }
+      #loader .ld-bar > span {
+        position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 999px;
+        background: linear-gradient(90deg, #3b82f6, #2563eb);
+        animation: ld-slide 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+      @keyframes ld-slide {
+        0%   { left: -42%; }
+        100% { left: 100%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #loader .box, #loader .ld-bar > span { animation: none; }
+        #loader .box { opacity: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="loader" aria-live="polite" aria-label="Loading the warehouse view">
+      <svg class="rack" viewBox="0 0 148 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <!-- upright frames -->
+        <rect x="16" y="6" width="8" height="108" rx="1.5" fill="#1e4fa3" />
+        <rect x="124" y="6" width="8" height="108" rx="1.5" fill="#1e4fa3" />
+        <!-- shelf beams -->
+        <rect x="16" y="36" width="116" height="6" rx="1.5" fill="#e8731a" />
+        <rect x="16" y="72" width="116" height="6" rx="1.5" fill="#e8731a" />
+        <rect x="16" y="108" width="116" height="6" rx="1.5" fill="#e8731a" />
+        <!-- boxes (fill in a looping wave) -->
+        <g fill="#d9b48a" stroke="#b0875a" stroke-width="1">
+          <rect class="box" x="30" y="84"  width="40" height="24" rx="1.5" />
+          <rect class="box" x="78" y="84"  width="40" height="24" rx="1.5" />
+          <rect class="box" x="30" y="48"  width="40" height="24" rx="1.5" />
+          <rect class="box" x="78" y="48"  width="40" height="24" rx="1.5" />
+          <rect class="box" x="30" y="12"  width="40" height="24" rx="1.5" />
+          <rect class="box" x="78" y="12"  width="40" height="24" rx="1.5" />
+        </g>
+      </svg>
+
+      <div class="ld-text">
+        <div class="ld-title">Warehouse 3D View</div>
+        <div class="ld-sub">Preparing the 3D view…</div>
+      </div>
+
+      <div class="ld-bar"><span></span></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
