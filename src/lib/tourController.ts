@@ -50,7 +50,7 @@ const ARRIVE_EPS = 2; // snap onto a travel target within this distance
 const CONN_STEP_PAST = 3200;       // min handle length ≈ a few steps past the aisle end before turning
 const CONN_HANDLE_FRAC = 0.62;     // handle length as a fraction of the cross-aisle distance
 const CONN_HANDLE_MAX = 9000;      // cap so the loop-restart wrap doesn't bulge absurdly
-const CONN_LIFT_THRESHOLD = 15000; // past this cross distance it's the loop restart: arc up & over
+const CONN_WRAP_FAR = 60000;       // only a gap this wide is walked round the outside instead of U-turned
 
 interface Leg {
   index: number;        // aisle index in rail.aisles
@@ -71,8 +71,8 @@ export class TourController {
   // the UI toggle can update.
   onStop: (() => void) | null = null;
   // Rail aisle indices the tour visits, in order (null = every aisle). The scene
-  // leaves out aisles that sit off the rack block — the block-stack drive aisle —
-  // because the U-turn geometry between "neighbours" assumes parallel rack aisles.
+  // puts the block-stack drive aisles first, nearest the racking last, so the final
+  // one U-turns straight into racking aisle A and the lap continues through the racks.
   route: number[] | null = null;
   private routeIdx: number[] = [];
 
@@ -136,6 +136,8 @@ export class TourController {
   private connLen = 1;  // arc length of the active connector
   private connU = 0;    // distance walked along it, normalised to [0,1]
   private connLift = 0; // vertical arc height (unused now the wrap stays grounded)
+  private connFromY = 0; // eye height leaving the aisle …
+  private connToY = 0;   // … and the next aisle's own eye height, eased to on the way
   private connSpeedMul = 1; // cruise multiplier for the active connector (>1 for the perimeter wrap)
   private scratch = new THREE.Vector3();
   private scratchTan = new THREE.Vector3();
@@ -331,7 +333,7 @@ export class TourController {
     const entryDist =
       entryOverride === undefined ? defaultEntry : clamp(entryOverride, 0, a.length);
     this.exitDist = leg.enterFromEnd ? 0 : a.length;
-    this.travelSign = this.exitDist >= entryDist ? 1 : -1;
+    this.travelSign = leg.enterFromEnd ? -1 : 1; // not exit>=entry: that reads +1 when both are 0
     this.baseYaw = this.facingYaw(a.dir, !leg.enterFromEnd);
     this.dist = entryDist;
     // Velocity carries over from the connector so the walk into the aisle is
@@ -632,6 +634,10 @@ export class TourController {
     const nb = this.rail.aisles[nextLeg.index];
     const entryDist = nextLeg.enterFromEnd ? nb.length : 0;
     const eyeY = this.camera.position.y;
+    // A low drive aisle and a tall racking aisle want different eye heights: ease
+    // between them along the connector so the hand-off never steps.
+    this.connFromY = eyeY;
+    this.connToY = this.rail.targetHeightFor(nextLeg.index);
 
     // Endpoints on the centrelines (at eye height).
     const from = this.camera.position.clone();
@@ -651,11 +657,13 @@ export class TourController {
     const along = delta.dot(exitDir);
     const perp = delta.clone().addScaledVector(exitDir, -along).length();
 
-    // The loop wrap (last aisle -> first) spans the whole rack block perpendicularly:
-    // walk AROUND the outside on the open floor rather than U-turning across it.
-    // Adjacent turns (even when one aisle is much longer) stay a grounded U-turn and
-    // just walk the extra forward distance.
-    const wrapping = perp > CONN_LIFT_THRESHOLD;
+    // The loop restart (back to the route's first aisle) walks AROUND the outside of
+    // the block on the open floor. Every other step is a neighbour U-turn however wide
+    // the cross aisle: the block-stack drive aisles sit 12.6 m apart (18.9 m in the
+    // depth-stretched world) and round their bank ends exactly like the racks do.
+    const n = this.aisleCount;
+    const nextOffset = (((this.startIdx + this.seqPos + 1) % n) + n) % n;
+    const wrapping = nextOffset === 0 || perp > CONN_WRAP_FAR;
     this.connSpeedMul = wrapping ? 3 : 1; // the long perimeter lap moves briskly
 
     // Width of the U-turn curve: smooth and wide enough for the cross gap.
@@ -711,7 +719,7 @@ export class TourController {
     const t = this.connU;
 
     this.connCurve.getPointAt(t, this.scratch);
-    this.scratch.y += this.connLift * Math.sin(Math.PI * t);
+    this.scratch.y = this.connFromY + (this.connToY - this.connFromY) * smootherstep(t) + this.connLift * Math.sin(Math.PI * t);
     this.camera.position.copy(this.scratch);
 
     // Face along the path tangent so the view turns gradually with the curve —

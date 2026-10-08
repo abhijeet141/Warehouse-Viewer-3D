@@ -156,11 +156,9 @@ export function buildBlockStackStock(
   labelMesh.name = 'BLOCK_LABELS';
   labelMesh.visible = false; // shown once the shared texture is in
 
-  // Status tags on the load faces: the demo tags booked pallets ALLOCATED; DB mode
-  // tags every quantity type a pallet carries, with its quantity. One instanced mesh
-  // per distinct text (a few dozen at most), collected while the pallets are placed.
-  const tagsOf = (p: LanePod): { text: string; kind: string }[] =>
-    p.tags ?? (p.quantities ? p.quantities.map((q) => ({ text: q.label, kind: q.type })) : p.allocation ? [{ text: 'ALLOCATED', kind: 'ALLOCATED' }] : []);
+  // Status tags on the load faces: a booked pallet carries an ALLOCATED tag. One
+  // instanced mesh per distinct text, collected while the pallets are placed.
+  const tagsOf = (p: LanePod): { text: string; kind: string }[] => (p.allocation ? [{ text: 'ALLOCATED', kind: 'ALLOCATED' }] : []);
   interface TagGroup { kind: string; items: { pod: number; matrix: THREE.Matrix4 }[] }
   const tagGroups = new Map<string, TagGroup>();
   const tagRefs = new Map<number, { text: string; slot: number }[]>(); // pod index → its tag instances

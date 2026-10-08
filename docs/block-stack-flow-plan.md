@@ -8,24 +8,25 @@ audience clicks the two decisions a real operator makes (where to put the pallet
 away, which pallet to scan) and sees the system's answer each time.
 
 Source of truth for every rule shown: `Task/FLD-69/block-stack.md` (HLD),
-`block-stack-how-it-decides.md`, and the two Hinglish Part 3 documents. Nothing
-invented; where the docs leave a choice open (e.g. empty lane vs part-filled lane on
-putaway) the flow says so.
+`block-stack-how-it-decides.md`, the two Hinglish Part 3 documents and, since
+2026-10-08, `FLD-68 Block Stack - Change List.md` (Que 1/2/3/5 + the acceptance fix)
+and the same-kind swap plan. Nothing invented; where the docs leave a choice open (e.g.
+empty lane vs part-filled lane on putaway) the flow says so.
 
 ## 1. Storyline (12 steps, 5 stages)
 
 | # | Stage | Step | What the audience sees | Interaction |
 |---|---|---|---|---|
-| 0 | Policies | Zones and policies | Corner zones BSA/BSB/BSC glow; panel lists each zone's policy and its hash keys (1 zone ↔ 1 policy) | — |
-| 1 | Policies | What counts as the same stock | Each BSA lane glows in its class colour; table lane → pods → class → hash. BSA vs BSB contrast (B7 & B9 two classes vs one) | — |
-| 2 | Putaway | A pallet arrives | Forklift appears at goods-in (front cross-aisle at the BS1 mouth) carrying 40 × 4471 Cola B7; panel shows its hash under each policy in play | — |
-| 3 | Putaway | Rule → zone BSA, engine filters lanes | Lanes light green (OK: empty or same hash) or red (dropped: other class / full); the engine's own choice is outlined — this warehouse's putawayPreference ranks part-filled lanes first, so it tops up BSA04's stack | **Click a lane.** Wrong class → refusal styled on error 1942 with the reason; Next = engine's choice |
-| 4 | Putaway | Reserve → move → confirm | Truck drives down BS1, squares up, lifts to the top of the stack, drives into the lane, sets the pallet ON TOP of the existing pallets, backs out, returns to the mouth | auto |
+| 0 | Policies | Zones and policies | Zones BSD/BSE/BSF glow; panel lists each zone's policy and its hash keys (1 zone ↔ 1 policy) | — |
+| 1 | Policies | What counts as the same stock | Each BSD lane glows in its class colour; table lane → pods → class → hash. BSD vs BSE contrast (B7 & B9 two classes vs one) | — |
+| 2 | Putaway | A pallet arrives | Forklift appears at goods-in (front cross-aisle at the BS3 mouth) carrying 40 × 4471 Cola B7; panel shows its hash under each policy in play | — |
+| 3 | Putaway | Rule → zone BSD, the stock-mix gate filters lanes | Lanes light green (OK: empty or same class) or red (dropped: other class / full); the engine's own choice is outlined — the first lane that passes in the zone's putaway order (lane number, as in the local test data), BSD01, which already holds the class | **Click a lane.** Wrong class → refusal styled on error 1942 with the reason; Next = engine's choice |
+| 4 | Putaway | Reserve → move → confirm | Truck drives down BS3, squares up, lifts to the top of the stack, drives into the lane, sets the pallet ON TOP of the existing pallets, backs out, returns to the mouth | auto |
 | 5 | Putaway | Putaway confirmed | Ledger: lane pods n→n+1, hash null→H1 (stamped) or unchanged; the upsert-trigger gate explained | — |
-| 6 | Allocation | An order arrives | ORD-1001 · 40 × 4471 · rule R-12 (zone BSA, FEFO, podSubstitution = true); all AVAILABLE 4471 pallets in BSA flash as candidates | — |
-| 7 | Allocation | Engine names the bottom pallet (no depth model) | The lowest pallet of the topped-up stack (BSA04-01) turns amber; camera drops to the lane face so the audience sees the pallets standing on it; ledger AVAILABLE→ALLOCATED, job J-501 created | — |
-| 8 | Picking | Start-pick | J-501 RESERVED; substitutable set table (zone BSA, same hash, ORDER BY currentPodCount ASC); truck drives out to BSA04 | auto |
-| 9 | Picking | At the lane: pick what you can reach | The top pallet of the stack (the one just put away) glows green; BSA03's face amber (it belongs to ORD-1002); the bottom pallet amber | **Click a pallet.** Verdict per HLD §6.4: Case A / Case B / denied (deep pallet, hash mismatch, other zone, reserved job, pallet-directed, short). Default = the top pallet → Case A, no relocation |
+| 6 | Allocation | An order arrives | ORD-1001 · 40 × 4471 · rule R-12 (zone BSD, oldest first, pallet substitution on); all AVAILABLE 4471 pallets in BSD flash as candidates | — |
+| 7 | Allocation | Engine names the bottom pallet (no depth model) | Oldest first lands on the first pallet put into the topped-up lane (BSD01-01), which turns amber; camera drops to the lane face so the audience sees the pallets standing on it; ledger AVAILABLE→ALLOCATED, job J-501 created with allowPodSubstitution | — |
+| 8 | Picking | Start-pick | J-501 RESERVED; substitutable set table (zone BSD, same class and policy; the job's own lane first, then fewest pallets, then nearest; cap 10); truck drives out to BSD01 | auto |
+| 9 | Picking | At the lane: pick what you can reach | The top pallet of the stack (the one just put away) glows green; BSD02's face amber (it belongs to ORD-1002); the bottom pallet amber | **Click a pallet.** Verdict in the backend's order: substitution off (2815) / outside the permitted set (2814: other zone, other class) / Case A / Case B / refused (2818: reserved holder, not enough stock) / order line (2817). Default = the top pallet → Case A, no relocation |
 | 10 | Picking | Confirm — swap, then pick | Ledger of the swap (X, Y, job re-point, displaced order for Case B); truck relocates if needed, lifts the scanned pallet, backs out, drives to the mouth | auto (after Confirm) |
 | 11 | Complete | Pick complete | Final ledger, lane states, T = A + L invariant; Restart | — |
 
@@ -35,13 +36,19 @@ still click during an interaction step.
 
 ## 2. Fixture (the FLD-69 worked example, made live)
 
-- BSA03: P1..P5 (4471 · B7 = class H1). P5 (the face) is pre-booked to ORD-1002 / J-502
-  (job AVAILABLE) — the Case B set-up. P2 is **not** pre-allocated: step 7 allocates it.
-- BSA04: P8, P9 (H1) — the putaway tops this stack up (3 pods), allocation names its bottom pallet, and the pick takes the top one (Case A, same lane).
-- BSA05: 4 × B9 (H2) — hash mismatch when scanned.
-- BSA06: one B7+B8 pallet (its own class H3).
-- Other lanes keep the seeded fill so the candidate table has real variety (empty lanes,
-  other classes, full lanes).
+The story lanes come first in the zone's putaway order (lane number, as in the local test
+data where putawayPreference = lane number), so the engine's own putaway choice is truthful:
+
+- BSD01: two B7 pallets (class H1) — the putaway tops this stack up (3 pods), allocation
+  names its bottom pallet, and the pick takes the top one (Case A, same lane).
+- BSD02: five B7 pallets; the face (P5) is pre-booked to ORD-1002 / J-502 (job not
+  started) — the Case B set-up.
+- BSD03: 4 × B9 (H2) — another class: refused on putaway, never in the pick set.
+- BSD04: one B7+B8 pallet (its own class H3).
+- BSD05: three B7 pallets, face booked to ORD-1017 whose job is RESERVED (never moved).
+- BSD06: three B7 pallets, 12-case face (part pallet).
+- The other lanes keep the seeded fill (Cola only in the story zones), so the candidate
+  table has real variety: empty lanes, same-class lanes, other classes, full lanes.
 
 ## 3. Architecture
 
@@ -92,17 +99,17 @@ truck animated by `__flow.step(dt)`:
 
 - Policies: zone glows + per-lane class table with hashes (step 1, 2).
 - Putaway: truck at goods-in with GI-2041; candidate table (2 empty lanes OK, 4 same-class OK,
-  4 dropped); BSA05 refused with the 1942 wording, BSB01 refused as outside the rule's zones;
-  engine's choice BSA01 → truck drove, set the pallet at position 1, hash stamped, returned.
+  4 dropped); BSD05 refused with the 1942 wording, BSE01 refused as outside the rule's zones;
+  engine's choice BSD01 → truck drove, set the pallet at position 1, hash stamped, returned.
 - Allocation: 50 eligible pallets flashed; P2 booked live (ledger AVAILABLE → ALLOCATED, J-501).
-- Picking: J-501 RESERVED; set = BSA01 (1) · BSA04 (2) · BSA03 (5) · BSA09 (13), BSA05 excluded;
-  denials verified for a deep pallet, a hash mismatch (BSA05-04) and another zone (BSC01-14);
-  Case A (BSA04-02) and Case B (BSA03-05 → ORD-1002 displaced onto P2) both committed with the
+- Picking: J-501 RESERVED; set = BSD01 (1) · BSD04 (2) · BSD03 (5) · BSD09 (13), BSD05 excluded;
+  denials verified for a deep pallet, a hash mismatch (BSD05-04) and another zone (BSF01-14);
+  Case A (BSD04-02) and Case B (BSD03-05 → ORD-1002 displaced onto P2) both committed with the
   expected ledger; re-scanning before confirm switches the verdict; the truck lifted from level 2
   and from level 5 (inner mast extends) and drove the pallet out; lane counts and hashes updated.
-- Complete: lane table + full ledger (11 lines); Restart resets the fixture (BSA01 empty, P2 free,
+- Complete: lane table + full ledger (11 lines); Restart resets the fixture (BSD01 empty, P2 free,
   4,040 pallets); hands-free auto-play reached Complete on its own.
-- After closing: hover tooltips, walk mode (BS1) and Escape all work; no console errors;
+- After closing: hover tooltips, walk mode (BS3) and Escape all work; no console errors;
   `svelte-check` 0 errors, `vite build` passes.
 
 ## 7. Demo extras (2026-09-23)
@@ -110,20 +117,53 @@ truck animated by `__flow.step(dt)`:
 - **Scenario strip** on the scan step: Case A, Case B, hash mismatch, deep pallet, reserved
   elsewhere, pallet-directed job, part pallet. Each button scans the pallet that produces that
   outcome (the pallet-directed one flips the job's rule to R-40 for the scan, then restores it).
-  Two fixture lanes make every scenario reachable: BSA09 (three B7 pallets, face booked to
-  ORD-1017 whose job is RESERVED) and BSA10 (three B7 pallets, 12-case face).
+  Two fixture lanes make every scenario reachable: BSD05 (three B7 pallets, face booked to
+  ORD-1017 whose job is RESERVED) and BSD06 (three B7 pallets, 12-case face).
 - **Zone ledger** at the foot of the panel: pallets, AVAILABLE, ALLOCATED and T per class in
-  zone BSA, recomputed on every state change so allocation and the swap visibly re-label cases
+  zone BSD, recomputed on every state change so allocation and the swap visibly re-label cases
   while T only moves at the pick.
 - **Picker's view**: walk-mode camera beside the truck at 1.7 m, facing the lane; the forklift
   keeps working in either camera; Overview returns to the chase camera.
 - **Pause/Resume** for the forklift (main button while it moves, or Space); the hands-free toggle
   is labelled Auto-play.
 
-## 8. DB mode (2026-09-23)
+## Virtual tour through the block stack (2026-10-08)
 
-The header's **DB mode** button replaces the seeded block stack with the real one read from the
-local location_service / pods / products services (read-only, GET only): segment definition
-SAX1-SD-BLOCK-STACK, its areas and lanes, zones, stock-mix policies and the pallets in the lanes,
-laid out on the same floor. The walk-through above is disabled in DB mode because it is scripted
-against the demo fixture lanes. Details, endpoints and the layout rules: docs/db-mode.md.
+The rail orders the aisles across the floor — BS1, BS2, BS3, then A … V — so ←/→, the
+picker and the tour agree. The tour's fly-in lands in BS1, the serpentine walks BS1 →
+BS2 → BS3 with three showcase stops per drive aisle — each placed where the three lanes
+in line hold stock on both sides of the aisle, the tallest such columns near each third
+of the aisle — the
+last drive aisle U-turns straight into racking aisle A with the eye height eased from
+~2 m to racking height on the way, the racking is walked A → V as before, and the lap
+returns around the outside to BS1. Every neighbour transition is a U-turn, whatever
+the gap (the drive aisles are 12.6 m apart); only the lap restart walks round the
+outside. At a block-stack stop the camera sweeps the faced lane and its neighbours
+either side level by level (the lane that really faces the aisle, never one seen
+through an empty lane): the three columns are outlined, the level in view is boxed
+across them, and a Block Stack Level panel at the foot of the view lists the pallets
+on it — the drive-aisle counterpart of the racking's Rack Level panel. Hover stays
+off while the tour runs, as in the racking. The rail remembers the eye height the user chose
+and restores it per aisle (capped at half the aisle height).
+
+## Copy aligned with the FLD-68 Part 3 backend (2026-10-08)
+
+The panel text was rewritten for presentation (plain words, pallet/lane, one idea per
+sentence) and checked against the backend as built on `ft-fld-68` (2026-10-07):
+
+- Putaway: the engine's choice is the first lane that passes, in the zone's putaway order;
+  it has no preference for a part-filled lane (how-it-decides Q3). The refusal quotes the
+  magma-pods 1942 wording ("Segment may only hold stock matching on [...]").
+- Allocation: oldest first (the local rules sort FIFO); the rule's flag reaches the job as
+  `allowPodSubstitution`.
+- Start-pick: the job's own lane first, then fewest pallets, then nearest, capped by the
+  policy (Que 5); scope `segment` / `zone` / `warehouse` (Que 2).
+- Scan verdicts carry the real codes: 2815 substitution off, 2814 outside the permitted
+  set (other zone or other class), 2817 order line, 2818 displacement (reserved holder,
+  not enough stock); the class is re-fingerprinted at confirm (2816).
+- Confirm: release and claim are journalled as an exchange (operation types 40 / 39,
+  Que 3); the re-point also writes the job format (Que 1).
+- Complete: notes the same-kind rule for HELD / RECEIPTED jobs and the breakable-pallet
+  rule for whole-pallet jobs.
+- Picker's view now looks at the spot ahead of the forks, so the truck and its lane share
+  the frame.

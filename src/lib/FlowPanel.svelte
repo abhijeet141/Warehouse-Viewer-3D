@@ -31,7 +31,7 @@
       </svg>
     </span>
     <div class="fp-title">
-      <span class="fp-label">Block stack · FLD-69</span>
+      <span class="fp-label">Block stack · walk-through</span>
       <span class="fp-name">{st.stage}</span>
     </div>
     <span class="fp-step">step {st.stepIndex + 1}<span class="fp-dim">/{st.stepCount}</span></span>
@@ -112,13 +112,13 @@
       <!-- Live ledger for the story zone: allocation and swap only move cases between
            AVAILABLE and ALLOCATED; only the pick changes T. -->
       <div class="fp-totals">
-        <div class="tt-row tt-head"><span>Zone {st.totalsZone} · class</span><span>Pallets</span><span>Avail</span><span>Alloc</span><span>T</span></div>
+        <div class="tt-row tt-head"><span>Zone {st.totalsZone} · class</span><span>Pallets</span><span>Avail</span><span>Alloc</span><span>Total</span></div>
         {#each st.totals as t (t.label)}
           <div class="tt-row" class:story={t.story}>
             <span>{t.label} <i>{t.hash}</i></span><span>{t.pallets}</span><span>{t.available}</span><span>{t.allocated}</span><span>{t.available + t.allocated}</span>
           </div>
         {/each}
-        <div class="tt-note">cases · T = AVAILABLE + ALLOCATED</div>
+        <div class="tt-note">cases · Total = Available + Allocated</div>
       </div>
     {/if}
   </div>

@@ -1,145 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fade, fly } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
   import WarehouseScene from './lib/WarehouseScene.svelte';
   import { SEGMENTS_SUNDANCE } from './data/segmentsWarehouse5';
-  import { SEGMENTS_BLOCK_STACK, type LaneStock } from './data/blockStack';
-  import { DB_DEFINITION_CODE, loadDbBlockStack, type DbLoadResult } from './data/dbBlockStack';
-  import { DbApiError, probeCredentials, readStoredCredentials, storeCredentials, type DbCredentials } from './data/dbApi';
+  import { SEGMENTS_BLOCK_STACK } from './data/blockStack';
   import type { Segment, SegmentType } from './types';
 
-  // The Sundance racking model plus the block-stack floor storage laid out beside
-  // it. The block stack comes from one of two sources: the seeded demo layout, or
-  // (DB mode) the real segment definition, zones, lanes and pallets read from the
-  // local FloWMS services — read-only, through the dev proxy.
-  type DataMode = 'demo' | 'db';
-  // A reload lands in DB mode — the user's real block stack; the demo is one click away.
-  const DEFAULT_MODE: DataMode = 'db';
-  let dataMode: DataMode = DEFAULT_MODE;
-  let booting = DEFAULT_MODE === 'db';      // the first DB read: the scene is built once it lands
-  let dbData: DbLoadResult | null = null;   // last successful DB read
-  let dbBusy = false;                       // a read is in flight
-  let dbProgress = '';
-  let dbError = '';
-  let dbDialogOpen = false;
-  let dbInfoOpen = readInfoOpen();          // the summary card while in DB mode
-  $: rememberInfoOpen(dbInfoOpen);
-  let dbTokenInput = '';
-  let dbFingerprintInput = '';
-  let dbCreds: DbCredentials | null = readStoredCredentials();
-  let sceneKey = 0;                         // bumping it rebuilds the scene on the other data set
-  let sceneBuilding = false;                // between a rebuild and its first rendered frame
-
-  $: SEGMENTS = (dataMode === 'db' && dbData
-    ? [...SEGMENTS_SUNDANCE, ...dbData.segments]
-    : [...SEGMENTS_SUNDANCE, ...SEGMENTS_BLOCK_STACK]) as Segment[];
-  // The scene builds its lane stock from this; null means the seeded demo pallets.
-  $: stockSource = dataMode === 'db' && dbData ? dbStockSource(dbData) : null;
-
-  function dbStockSource(data: DbLoadResult): (lanes: Segment[]) => Map<string, LaneStock> {
-    return (lanes) => new Map(lanes.filter((l) => l.lane).map((l) => [l.fullName, data.stock.get(l.fullName) ?? { lane: l, pods: [], classKey: null }]));
-  }
-
-  const INFO_KEY = 'wv.db.info';
-  function readInfoOpen(): boolean {
-    try { return localStorage.getItem(INFO_KEY) !== 'closed'; } catch { return true; }
-  }
-  function rememberInfoOpen(open: boolean) {
-    try { localStorage.setItem(INFO_KEY, open ? 'open' : 'closed'); } catch { /* fine without */ }
-  }
-
-  function switchScene() {
-    sceneBuilding = true;
-    sceneKey++;
-  }
-
-  async function loadDb(creds: DbCredentials | null) {
-    dbBusy = true;
-    dbError = '';
-    dbProgress = 'Connecting…';
-    try {
-      await probeCredentials(creds);
-      const data = await loadDbBlockStack(creds, (m) => (dbProgress = m));
-      dbData = data;
-      dbCreds = creds;
-      storeCredentials(creds);
-      dataMode = 'db';
-      dbDialogOpen = false;
-      switchScene();
-    } catch (e) {
-      dbError = e instanceof DbApiError ? `${e.status ? e.status + ' · ' : ''}${e.message}` : (e as Error).message;
-      if (e instanceof DbApiError && (e.status === 401 || e.status === 403)) {
-        dbCreds = null;
-        storeCredentials(null);
-        dbDialogOpen = true;
-      }
-    } finally {
-      dbBusy = false;
-      dbProgress = '';
-    }
-  }
-
-  // Startup in DB mode: read first and build the scene once, with the result, while
-  // the page loader is still up. Stored credentials are used, else the proxy's own; a
-  // rejection opens the connect dialog over the demo scene instead.
-  async function bootDb() {
-    const loaderSub = document.querySelector<HTMLElement>('#loader .ld-sub');
-    const say = (m: string) => { dbProgress = m; if (loaderSub) loaderSub.textContent = m; };
-    const hadCreds = !!dbCreds;
-    dbBusy = true;
-    try {
-      say('Connecting to the local FloWMS…');
-      await probeCredentials(dbCreds);
-      dbData = await loadDbBlockStack(dbCreds, say);
-      dataMode = 'db';
-    } catch (e) {
-      dataMode = 'demo';
-      const msg = e instanceof DbApiError ? `${e.status ? e.status + ' · ' : ''}${e.message}` : (e as Error).message;
-      if (e instanceof DbApiError && (e.status === 401 || e.status === 403)) {
-        dbCreds = null;
-        storeCredentials(null);
-        dbError = hadCreds ? msg : ''; // no credentials at all is not an error, just a question
-        dbDialogOpen = true;
-      } else {
-        dbError = msg;
-      }
-    } finally {
-      dbBusy = false;
-      dbProgress = '';
-      booting = false;
-    }
-  }
-
-  // Header button. In DB mode: back to the demo (the last read is kept for the next
-  // switch; Refresh re-reads). Otherwise: show the last read, or read now with the
-  // stored token — or the proxy's own credentials — asking for a token only when
-  // the services reject the call.
-  async function toggleDbMode() {
-    if (dbBusy) return;
-    if (dataMode === 'db') { dataMode = 'demo'; switchScene(); return; }
-    if (dbData) { dataMode = 'db'; switchScene(); return; }
-    if (!dbCreds) {
-      try {
-        await probeCredentials(null);
-      } catch (e) {
-        dbError = e instanceof DbApiError && e.status === 401 ? '' : (e as Error).message;
-        dbDialogOpen = true;
-        return;
-      }
-    }
-    await loadDb(dbCreds);
-  }
-
-  function connectDb() {
-    const token = dbTokenInput.trim().replace(/^Bearer\s+/i, '');
-    const fingerprint = dbFingerprintInput.trim().replace(/^atFingerprint=/i, '');
-    if (!token || !fingerprint) { dbError = 'Both the access token and the atFingerprint cookie value are needed.'; return; }
-    dbTokenInput = '';
-    dbFingerprintInput = '';
-    void loadDb({ token, fingerprint });
-  }
-  function refreshDb() { if (!dbBusy) void loadDb(dbCreds); }
-  function forgetDb() { dbCreds = null; storeCredentials(null); }
+  // The Sundance racking model plus the block-stack floor storage laid out
+  // beside it (zones BSA/BSB/BSC, their lanes, and the BS drive aisle).
+  const SEGMENTS: Segment[] = [...SEGMENTS_SUNDANCE, ...SEGMENTS_BLOCK_STACK];
 
   const ALL_TYPES: SegmentType[] = ['AISLE', 'BAY', 'LEVEL', 'SPACE', 'BLOCK', 'LANE'];
 
@@ -194,7 +63,6 @@
   const MIN_LOADER_MS = 1000;
   const appStart = performance.now();
   function onSceneReady() {
-    sceneBuilding = false;
     const loader = document.getElementById('loader');
     if (!loader) return;
     const wait = Math.max(0, MIN_LOADER_MS - (performance.now() - appStart));
@@ -284,7 +152,6 @@
   // Keyboard shortcuts (ignored while typing in a field): "/" focuses search,
   // "H" toggles the nav bar.
   onMount(() => {
-    if (booting) void bootDb();
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
@@ -316,12 +183,7 @@
     <div class="title">
       <h1>Warehouse 3D View</h1>
       <span class="subtitle">
-        {#if dataMode === 'db' && dbData}
-          {@const s = dbData.summary}
-          <span class="db-tag">DB</span> {s.definition.code} · {s.zones} zones · {s.lanes} lanes · {s.pallets} pallets in {s.lanesUsed} lanes · {counts.AISLE} aisles · {counts.SPACE.toLocaleString()} spaces
-        {:else}
-          {counts.AISLE} aisles · {counts.BAY} bays · {counts.LEVEL} levels · {counts.SPACE.toLocaleString()} spaces · {counts.BLOCK} block-stack zones · {counts.LANE} lanes
-        {/if}
+        {counts.AISLE} aisles · {counts.BAY} bays · {counts.LEVEL} levels · {counts.SPACE.toLocaleString()} spaces · {counts.BLOCK} block-stack zones · {counts.LANE} lanes
       </span>
     </div>
 
@@ -352,7 +214,7 @@
           <line x1="16.5" y1="16.5" x2="21" y2="21" />
         </svg>
         <input
-          class="search-input" type="text" placeholder="Search location… e.g. N11G03, A25 or BSA03"
+          class="search-input" type="text" placeholder="Search location… e.g. N11G03, A25 or BSD03"
           bind:this={findInputEl}
           bind:value={findQuery}
           on:input={updateSuggestions}
@@ -423,9 +285,8 @@
       <button
         class="toggle flow-btn"
         class:active={flowActive}
-        disabled={dataMode === 'db'}
         on:click={() => sceneRef?.toggleFlow()}
-        title={dataMode === 'db' ? 'The walk-through runs on the demo fixture lanes — switch DB mode off to use it' : flowActive ? 'Close the block-stack walk-through' : 'Walk through FLD-69: policies → putaway → allocation → picking with pallet substitution'}
+        title={flowActive ? 'Close the block-stack walk-through' : 'Walk through FLD-69: policies → putaway → allocation → picking with pallet substitution'}
       >
         <svg class="t-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="13" width="7" height="7" rx="1" /><rect x="3" y="4" width="7" height="7" rx="1" /><rect x="14" y="13" width="7" height="7" rx="1" />
@@ -433,29 +294,6 @@
         </svg>
         Block-stack flow
       </button>
-
-      <!-- DB mode: the real block stack from the local location_service (read-only). -->
-      <button
-        class="toggle db-btn"
-        class:active={dataMode === 'db'}
-        class:busy={dbBusy}
-        disabled={dbBusy}
-        on:click={toggleDbMode}
-        title={dataMode === 'db' ? 'Back to the seeded demo block stack' : 'Show your real block stack — segment definition, zones, lanes and pallets — read from the local FloWMS services'}
-      >
-        <svg class="t-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <ellipse cx="12" cy="5.5" rx="8" ry="3" /><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13" /><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
-        </svg>
-        {dbBusy ? 'Reading DB…' : 'DB mode'} <span class="state">{dataMode === 'db' ? 'on' : 'off'}</span>
-      </button>
-      {#if dataMode === 'db'}
-        <button class="icon-btn" on:click={refreshDb} disabled={dbBusy} title="Re-read the block stack from the database">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v5h-5" /></svg>
-        </button>
-        <button class="icon-btn" class:on={dbInfoOpen} on:click={() => (dbInfoOpen = !dbInfoOpen)} title={dbInfoOpen ? 'Hide the DB summary' : 'Show the DB summary'}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
-        </button>
-      {/if}
 
       <span class="divider"></span>
 
@@ -531,98 +369,7 @@
     </button>
   {/if}
 
-  {#if dbDialogOpen}
-    <!-- Credentials for the local services. They stay in this tab's session storage;
-         every request the viewer makes is a GET. -->
-    <div class="db-modal" role="dialog" aria-modal="true" aria-labelledby="db-title" transition:fade={{ duration: 120 }}>
-      <div class="db-card">
-        <div class="db-head">
-          <h2 id="db-title">Connect to the local FloWMS</h2>
-          <button class="db-x" on:click={() => (dbDialogOpen = false)} aria-label="Close">✕</button>
-        </div>
-        <p class="db-intro">
-          DB mode reads your block stack — segment definition <code>{DB_DEFINITION_CODE}</code>, its areas and lanes, zones,
-          stock-mix policies and the pallets standing in the lanes — from the services started by launch.ps1.
-          <strong>Read-only:</strong> only GET requests are made; nothing is inserted or updated.
-        </p>
-        <label class="db-field">
-          <span>Access token</span>
-          <textarea rows="3" bind:value={dbTokenInput} placeholder="eyJhbGciOi… (the Bearer token from Postman)" spellcheck="false"></textarea>
-        </label>
-        <label class="db-field">
-          <span>atFingerprint cookie</span>
-          <input type="text" bind:value={dbFingerprintInput} placeholder="01a0…" spellcheck="false" autocomplete="off" />
-        </label>
-        <p class="db-note">
-          Kept in this tab's session storage only — never written to disk, never sent anywhere but localhost.
-          Alternatively drop <code>flowms-viewer-auth.json</code> ({'{'}"token", "fingerprint"{'}'}) in your temp folder and the dev server signs the requests itself.
-        </p>
-        {#if dbError}<div class="db-error">{dbError}</div>{/if}
-        {#if dbBusy}<div class="db-progress">{dbProgress}</div>{/if}
-        <div class="db-actions">
-          {#if dbCreds}<button class="db-secondary" on:click={forgetDb}>Forget stored token</button>{/if}
-          <span class="db-spacer"></span>
-          <button class="db-secondary" on:click={() => (dbDialogOpen = false)}>Cancel</button>
-          <button class="db-primary" on:click={connectDb} disabled={dbBusy}>{dbBusy ? 'Reading…' : 'Connect & read'}</button>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if !dbDialogOpen && (dbBusy || sceneBuilding || dbError)}
-    <div class="db-toast" class:err={!!dbError && !dbBusy} transition:fade={{ duration: 120 }}>
-      {#if dbBusy}{dbProgress || 'Reading the database…'}
-      {:else if sceneBuilding}Building the 3D view…
-      {:else}{dbError} <button class="db-toast-x" on:click={() => (dbError = '')} aria-label="Dismiss">✕</button>{/if}
-    </div>
-  {/if}
-
-  {#if dataMode === 'db' && dbData && dbInfoOpen}
-    {@const s = dbData.summary}
-    <!-- What was read: the definition, its counts and the policy each zone resolves to. -->
-    <aside class="db-info" transition:fly={{ y: 10, duration: 200 }}>
-      <div class="db-info-head">
-        <span class="db-tag">DB</span>
-        <span class="db-info-title">{s.definition.name} <span class="db-info-code">{s.definition.code}</span></span>
-        <button class="db-x" on:click={() => (dbInfoOpen = false)} aria-label="Hide the DB summary">✕</button>
-      </div>
-      <div class="db-info-grid">
-        <span>Warehouse</span><span>{s.warehouseId} · read {s.fetchedAt.toLocaleTimeString()}</span>
-        <span>Types</span><span>{s.areaType} → {s.laneType}</span>
-        <span>Zones</span><span>{s.zones} · {s.lanes} lanes · {s.lanesUsed} in use</span>
-        <span>Pallets</span><span>{s.pallets} · {s.podLines} pod lines</span>
-      </div>
-      <table class="db-policies">
-        <thead><tr><th>Policy</th><th>Hash keys</th><th>Zones</th></tr></thead>
-        <tbody>
-          {#each s.policies as p}
-            <tr>
-              <td><span class="db-pol">{p.code}</span><span class="db-dim">{p.scope} scope · {p.candidates} candidates</span></td>
-              <td>{p.keys.join(', ')}</td>
-              <td class="db-zones">{p.zones.join(' ')}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      {#if s.pickTrail.jobs.length || s.pickTrail.locations.length}
-        <div class="db-line">
-          <span class="db-dim">Pick trail:</span>
-          {#if s.pickTrail.jobs.length}{s.pickTrail.jobs.map((j) => `${j.count} ${j.status.toLowerCase()}`).join(' · ')} pick job{s.pickTrail.jobs.reduce((n, j) => n + j.count, 0) === 1 ? '' : 's'} on block-stack pallets{:else}no pick jobs on block-stack pallets{/if}{#if s.pickTrail.inBucket} · {s.pickTrail.inBucket} in a bucket{/if}
-          {#if s.pickTrail.locations.length}· pick locations {s.pickTrail.locations.map((l) => `${l.name} (${l.pallets})`).join(', ')}{/if}
-        </div>
-      {/if}
-      {#if s.emptyZones.length}<div class="db-line db-dim">No stock yet: {s.emptyZones.join(', ')}</div>{/if}
-      {#if s.driftLanes.length}<div class="db-line db-warn">currentPodCount ≠ pallets found: {s.driftLanes.join('; ')}</div>{/if}
-      {#if s.overfullLanes.length}<div class="db-line db-warn">Over capacity: {s.overfullLanes.join(', ')}</div>{/if}
-      <div class="db-line db-dim">The DB holds no coordinates for these segments, so the floor plan is synthesised: zones in zonePreference order along the drive aisles, each lane a single stack up to maximumPods high. Hover a lane or pallet for its record.</div>
-    </aside>
-  {/if}
-
-  {#if !booting}
-  {#key sceneKey}
-    <WarehouseScene bind:this={sceneRef} on:ready={onSceneReady} on:tour={(e) => (tourActive = e.detail)} on:flow={(e) => (flowActive = e.detail)} on:stock={() => (showStock = true)} segments={SEGMENTS} {stockSource} {visibleTypes} {showStock} {showShell} />
-  {/key}
-  {/if}
+  <WarehouseScene bind:this={sceneRef} on:ready={onSceneReady} on:tour={(e) => (tourActive = e.detail)} on:flow={(e) => (flowActive = e.detail)} on:stock={() => (showStock = true)} segments={SEGMENTS} {visibleTypes} {showStock} {showShell} />
 </main>
 
 <style>
@@ -899,102 +646,6 @@
   }
   .icon-btn:hover { border-color: #3b82f6; color: #3b82f6; }
   .icon-btn svg { width: 16px; height: 16px; }
-
-  .toggle:disabled, .icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .icon-btn.on { border-color: #059669; color: #047857; background: rgba(5, 150, 105, 0.1); }
-
-  /* DB mode — emerald, so the live data set is never mistaken for the demo. */
-  .db-btn { border-color: #059669; color: #047857; font-weight: 600; }
-  .db-btn .t-icon { color: #059669; }
-  .db-btn:hover:not(:disabled) { background: rgba(5, 150, 105, 0.1); }
-  .db-btn.active { background: #059669; border-color: #059669; color: #fff; }
-  .db-btn.active .t-icon, .db-btn.active .state { color: #d1fae5; }
-  .db-btn.busy { opacity: 0.8; }
-  .db-tag {
-    display: inline-block; padding: 0 6px; margin-right: 2px; border-radius: 4px;
-    background: #059669; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; line-height: 15px; vertical-align: 1px;
-  }
-
-  .db-modal {
-    position: absolute; inset: 0; z-index: 60;
-    display: grid; place-items: center;
-    background: rgba(15, 23, 42, 0.45);
-    backdrop-filter: blur(3px);
-  }
-  .db-card {
-    width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
-    background: #ffffff; color: #0f172a;
-    border-radius: 16px; padding: 20px 22px 18px;
-    box-shadow: 0 30px 80px rgba(15, 23, 42, 0.35);
-    font-size: 13px;
-  }
-  .db-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .db-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
-  .db-x {
-    flex: none; width: 26px; height: 26px; border-radius: 50%; border: none;
-    background: #e2e8f0; color: #64748b; cursor: pointer; font-size: 11px; display: grid; place-items: center;
-  }
-  .db-x:hover { background: #cbd5e1; color: #0f172a; }
-  .db-intro { margin: 10px 0 14px; color: #334155; line-height: 1.45; }
-  .db-intro code, .db-note code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
-  .db-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-  .db-field span { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
-  .db-field textarea, .db-field input {
-    width: 100%; box-sizing: border-box; border: 1.5px solid #cbd5e1; border-radius: 10px;
-    padding: 8px 10px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #0f172a;
-    background: #f8fafc; resize: vertical; outline: none;
-  }
-  .db-field textarea:focus, .db-field input:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15); }
-  .db-note { margin: 0 0 12px; font-size: 11px; color: #64748b; line-height: 1.45; }
-  .db-error {
-    margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
-    background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.4); color: #b91c1c;
-  }
-  .db-progress { margin: 0 0 12px; font-size: 12px; color: #047857; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  .db-actions { display: flex; align-items: center; gap: 10px; }
-  .db-spacer { flex: 1; }
-  .db-secondary, .db-primary {
-    border-radius: 999px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1.5px solid #cbd5e1;
-    background: transparent; color: #475569;
-  }
-  .db-secondary:hover { border-color: #94a3b8; color: #0f172a; }
-  .db-primary { background: #059669; border-color: #059669; color: #fff; }
-  .db-primary:hover:not(:disabled) { background: #047857; }
-  .db-primary:disabled { opacity: 0.6; cursor: wait; }
-
-  .db-toast {
-    position: absolute; top: calc(var(--nav-h) * var(--nav-scale) + 12px); left: 50%; transform: translateX(-50%); z-index: 40;
-    display: inline-flex; align-items: center; gap: 10px;
-    padding: 7px 14px; border-radius: 999px; font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    background: #ffffff; color: #047857; border: 1px solid rgba(5, 150, 105, 0.45);
-    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18); white-space: nowrap; max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis;
-  }
-  .db-toast.err { color: #b91c1c; border-color: rgba(239, 68, 68, 0.5); }
-  .db-toast-x { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 11px; padding: 0 2px; }
-
-  .db-info {
-    position: absolute; top: calc(var(--nav-h) * var(--nav-scale) + 12px); left: 14px; z-index: 20;
-    width: 430px; max-width: calc(100vw - 28px); box-sizing: border-box;
-    padding: 12px 14px 12px; border-radius: 14px;
-    background: rgba(15, 23, 42, 0.86); color: #e2e8f0; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(148, 163, 184, 0.25); box-shadow: 0 16px 40px rgba(15, 23, 42, 0.35);
-    font-size: 11px; line-height: 1.4;
-  }
-  .db-info-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .db-info-title { flex: 1; font-size: 13px; font-weight: 600; color: #f8fafc; }
-  .db-info-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; color: #94a3b8; font-weight: 500; margin-left: 4px; }
-  .db-info .db-x { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
-  .db-info .db-x:hover { background: rgba(148, 163, 184, 0.35); color: #fff; }
-  .db-info-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin-bottom: 8px; }
-  .db-info-grid span:nth-child(odd) { font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #64748b; align-self: baseline; }
-  .db-policies { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-  .db-policies th { text-align: left; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #64748b; padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.25); }
-  .db-policies td { padding: 5px 6px 5px 0; vertical-align: top; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
-  .db-pol { display: block; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #6ee7b7; }
-  .db-zones { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #cbd5e1; }
-  .db-dim { color: #94a3b8; }
-  .db-warn { color: #fb7185; }
-  .db-line { margin-top: 7px; }
 
   /* Mid-width laptops (≤ 1520px): with the block-stack chips and the flow button
      the inline toolbar outgrows the bar, so shrink the whole bar a little more

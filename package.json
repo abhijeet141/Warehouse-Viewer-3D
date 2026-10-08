@@ -1,8 +1,8 @@
 {
-  "name": "warehouse-viewer-blockstack",
+  "name": "warehouse-viewer-blockstack-demo",
   "private": true,
   "version": "1.0.0",
-  "description": "Warehouse 3D View with block-stack floor storage (Svelte + Three.js)",
+  "description": "Warehouse 3D View with block-stack floor storage, demo data only (Svelte + Three.js)",
   "type": "module",
   "scripts": {
     "dev": "vite",

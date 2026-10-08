@@ -8,13 +8,10 @@ import { seededRng } from '../lib/rng';
 // and holds one stock class at a time — its stock-mix hash under the policy
 // resolved for its zone.
 //
-// Two areas, both on floor the racking model leaves empty:
-//   • the corner slab in front of the short A–E aisles (zones BSA/BSB/BSC either
-//     side of drive aisle BS1) — the lanes the FLD-69 fixture and worked example
-//     name, so the docs' scenarios can be pointed at on screen;
-//   • the bulk floor alongside the A-side of the rack block: six banks of lanes
-//     back to back, two zones per bank, facing drive aisles BS2–BS4 that run the
-//     full length of the block like the racking aisles do.
+// It stands on the bulk floor alongside the A-side of the rack block, floor the
+// racking model leaves empty: six banks of lanes back to back, two zones per bank,
+// facing drive aisles BS1–BS2 that run the full length of the block like the racking
+// aisles do. Zone BSD holds the FLD-69 fixture the walk-through is scripted against.
 //
 // Pallets stack five or six high (per zone) and three positions deep. Data axes
 // follow the rest of the model: X along the aisles, Y across (depth), Z up, mm.
@@ -44,7 +41,7 @@ export const POLICIES: Record<string, { keys: string[]; label: string }> = {
 };
 
 export interface BlockZone {
-  code: string;            // BLOCK segment name and lane prefix, e.g. "BSA"
+  code: string;            // BLOCK segment name and lane prefix, e.g. "BSD"
   policy: string;          // stock-mix policy resolved for the zone's lanes
   lanes: number;
   tiers: number;           // pallets stacked per position in this zone (5 or 6)
@@ -58,22 +55,12 @@ export interface DriveAisle { name: string; x: number; y: number; w: number; d: 
 
 // Drive aisles: named like aisles so the walkthrough rail and the floor arrows
 // pick them up; flagged floorStorage so the tour and the building shell ignore
-// them. BS1 is the corner aisle between the fixture zones; BS2–BS4 run the full
-// block length through the bulk floor, their mouths on the same front cross-aisle
-// as F–V.
+// them. BS1–BS2 run the full block length through the bulk floor, their mouths on
+// the same front cross-aisle as F–V.
 export const DRIVE_AISLES: DriveAisle[] = [
-  { name: 'BS1', x: 0, y: 9900,   w: 36000,  d: BS.AISLE_W },
-  { name: 'BS2', x: 0, y: -13600, w: 107400, d: BS.AISLE_W },
-  { name: 'BS3', x: 0, y: -26200, w: 107400, d: BS.AISLE_W },
-  { name: 'BS4', x: 0, y: -38800, w: 107400, d: BS.AISLE_W },
-];
-
-// Corner zones (fixture): A splits stock by product + batch, B only by product
-// (so batches share a lane), C by product + batch again.
-const CORNER_ZONES: BlockZone[] = [
-  { code: 'BSA', policy: 'BS-PRODUCT-BATCH', lanes: 10, tiers: 6, x0: 2000,  y0: 6400,  faceDir: 1,  aisle: 'BS1' },
-  { code: 'BSB', policy: 'BS-PRODUCT-ONLY',  lanes: 10, tiers: 5, x0: 17500, y0: 6400,  faceDir: 1,  aisle: 'BS1' },
-  { code: 'BSC', policy: 'BS-PRODUCT-BATCH', lanes: 20, tiers: 6, x0: 2000,  y0: 15500, faceDir: -1, aisle: 'BS1' },
+  { name: 'BS3', x: 0, y: -13600, w: 107400, d: BS.AISLE_W },
+  { name: 'BS2', x: 0, y: -26200, w: 107400, d: BS.AISLE_W },
+  { name: 'BS1', x: 0, y: -38800, w: 107400, d: BS.AISLE_W },
 ];
 
 // Bulk floor: banks of 3.5 m deep lanes, two 36-lane zones per bank along X,
@@ -85,16 +72,15 @@ const BANKS: {
   y0: number; faceDir: 1 | -1; aisle: string;
   zones: [string, string]; policies: [string, string]; tiers: [number, number];
 }[] = [
-  { y0: -8000,  faceDir: -1, aisle: 'BS2', zones: ['BSD', 'BSE'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-ONLY'],  tiers: [6, 5] },
-  { y0: -17100, faceDir: 1,  aisle: 'BS2', zones: ['BSF', 'BSG'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-BATCH'], tiers: [5, 6] },
-  { y0: -20600, faceDir: -1, aisle: 'BS3', zones: ['BSH', 'BSJ'], policies: ['BS-PRODUCT-ONLY', 'BS-PRODUCT-BATCH'],  tiers: [6, 6] },
-  { y0: -29700, faceDir: 1,  aisle: 'BS3', zones: ['BSK', 'BSL'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-ONLY'],  tiers: [5, 6] },
-  { y0: -33200, faceDir: -1, aisle: 'BS4', zones: ['BSM', 'BSN'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-BATCH'], tiers: [6, 5] },
-  { y0: -42300, faceDir: 1,  aisle: 'BS4', zones: ['BSP', 'BSR'], policies: ['BS-PRODUCT-ONLY', 'BS-PRODUCT-BATCH'],  tiers: [6, 6] },
+  { y0: -8000,  faceDir: -1, aisle: 'BS3', zones: ['BSD', 'BSE'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-ONLY'],  tiers: [6, 5] },
+  { y0: -17100, faceDir: 1,  aisle: 'BS3', zones: ['BSF', 'BSG'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-BATCH'], tiers: [5, 6] },
+  { y0: -20600, faceDir: -1, aisle: 'BS2', zones: ['BSH', 'BSJ'], policies: ['BS-PRODUCT-ONLY', 'BS-PRODUCT-BATCH'],  tiers: [6, 6] },
+  { y0: -29700, faceDir: 1,  aisle: 'BS2', zones: ['BSK', 'BSL'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-ONLY'],  tiers: [5, 6] },
+  { y0: -33200, faceDir: -1, aisle: 'BS1', zones: ['BSM', 'BSN'], policies: ['BS-PRODUCT-BATCH', 'BS-PRODUCT-BATCH'], tiers: [6, 5] },
+  { y0: -42300, faceDir: 1,  aisle: 'BS1', zones: ['BSP', 'BSR'], policies: ['BS-PRODUCT-ONLY', 'BS-PRODUCT-BATCH'],  tiers: [6, 6] },
 ];
 
 export const BLOCK_ZONES: BlockZone[] = [
-  ...CORNER_ZONES,
   ...BANKS.flatMap((b) =>
     b.zones.map((code, i): BlockZone => ({
       code, policy: b.policies[i], lanes: BANK_LANES, tiers: b.tiers[i],
@@ -108,8 +94,8 @@ export const laneName = (zone: BlockZone, i: number): string => `${zone.code}${S
 // Lane (and zone) height: the tallest possible stack plus headroom.
 const laneHeight = (tiers: number): number => tiers * BS.TIER_PITCH + BS.HEADROOM;
 
-// Drive aisles as AISLE segments (walkable, flagged floorStorage) — shared by the
-// demo layout and DB mode, which packs its own BS2–BS4 for the lane depth it draws.
+// Drive aisles as AISLE segments (walkable, flagged floorStorage); a caller may pass
+// its own list to pack the bulk floor for a different lane depth.
 export function driveAisleSegments(aisles: DriveAisle[] = DRIVE_AISLES): Segment[] {
   return aisles.map((a) => ({
     fullName: a.name, type: 'AISLE' as const,
@@ -190,28 +176,8 @@ export interface Allocation {
   jobStatus: JobStatus;
 }
 
-// DB mode: one pod line of a real pallet (product, quantity in its UOM, batches).
-export interface PodLineInfo {
-  product: string;      // SKU
-  productName: string;
-  qty: number;
-  uom: string;          // UOM code
-  batches: string[];
-  available: number;
-  allocated: number;
-}
-
-// DB mode: one quantity type on a pallet, summed over its lines per UOM — what the
-// pallet's face tags show ("AVAILABLE 100 UNIT", "ALLOCATED 40 UNIT").
-export interface PodQuantity {
-  type: string;                        // AVAILABLE, ALLOCATED, HELD, PICKED, …
-  label: string;                       // tag text
-  total: number;
-  byUom: { uom: string; qty: number }[];
-}
-
 export interface LanePod {
-  code: string;      // e.g. "BSA03-05"
+  code: string;      // e.g. "BSD03-05"
   lane: string;      // owning LANE segment
   index: number;     // 1-based fill order; the highest index is the face pallet
   column: number;    // depth position, 0 = deepest
@@ -222,19 +188,8 @@ export interface LanePod {
   cases: number;
   classKey: string;  // stock-mix class under the lane's policy
   allocation: Allocation | null; // at most one booking per pallet in this demo
-  // DB mode extras: the real pod, its lines, a fixed load height (quantities are in
-  // mixed UOMs, so they say nothing about height) and an explicit load shade.
-  uuid?: string;
-  lines?: PodLineInfo[];
-  loadFraction?: number;
-  shade?: number;
-  podType?: string | null;
-  quantities?: PodQuantity[];          // every quantity type the pallet carries (DB mode)
-  tags?: { text: string; kind: string }[]; // face tags when they are more than the quantities
-  // DB mode pick trail: where the pallet is on its way out, and the pick job on it.
-  place?: 'lane' | 'bucket' | 'drop';
-  bucket?: string | null;
-  pickJob?: { id: number; status: string; to: string | null; from: string | null; order: number | null } | null;
+  loadFraction?: number; // load height as a fraction of a full pallet, instead of cases
+  shade?: number;        // explicit load lightness, instead of the batch shade
 }
 
 export interface LaneStock {
@@ -273,11 +228,8 @@ export function classKeyFor(product: string, batches: string[], policy: string |
   return `${product}|${batches.join('+')}`;
 }
 
-// Lanes that follow the FLD-69 worked example exactly, so the docs' scenarios can
-// be pointed at on screen: BSA03 holds P1..P5 with P2 booked to ORD-1001 (job
-// J-501) and P5 — the face pallet — to ORD-1002 (J-502): the Case B set-up. BSA04
-// holds P8/P9 of the same class (the Case A substitute), BSA05 the B9 class (a hash
-// mismatch), BSA06 one internally mixed pallet.
+// The walk-through's lanes, first in the zone's putaway order: BSD01 top-up + allocation,
+// BSD02 Case B face, BSD03 other class, BSD04 mixed pallet, BSD05 reserved face, BSD06 part pallet.
 interface Fixture {
   product: string;
   batches: string[][];
@@ -285,26 +237,24 @@ interface Fixture {
   allocated?: Record<number, { order: string; job: string; jobStatus?: JobStatus }>;
 }
 const FIXTURE: Record<string, Fixture> = {
-  BSA03: {
+  BSD01: { product: '4471', batches: [['B7'], ['B7']] },
+  BSD02: {
     product: '4471',
     batches: [['B7'], ['B7'], ['B7'], ['B7'], ['B7']],
-    allocated: { 5: { order: 'ORD-1002', job: 'J-502' } }, // P2 is allocated live, by the flow
+    allocated: { 5: { order: 'ORD-1002', job: 'J-502' } },
   },
-  BSA04: { product: '4471', batches: [['B7'], ['B7']] },
-  BSA05: { product: '4471', batches: [['B9'], ['B9'], ['B9'], ['B9']] },
-  BSA06: { product: '4471', batches: [['B7', 'B8']] },
-  // Scenario lanes: a face pallet whose job another picker already holds, and a
-  // face pallet that is a 12-case part pallet.
-  BSA09: { product: '4471', batches: [['B7'], ['B7'], ['B7']], allocated: { 3: { order: 'ORD-1017', job: 'J-517', jobStatus: 'RESERVED' } } },
-  BSA10: { product: '4471', batches: [['B7'], ['B7'], ['B7']], cases: { 3: 12 } },
+  BSD03: { product: '4471', batches: [['B9'], ['B9'], ['B9'], ['B9']] },
+  BSD04: { product: '4471', batches: [['B7', 'B8']] },
+  BSD05: { product: '4471', batches: [['B7'], ['B7'], ['B7']], allocated: { 3: { order: 'ORD-1017', job: 'J-517', jobStatus: 'RESERVED' } } },
+  BSD06: { product: '4471', batches: [['B7'], ['B7'], ['B7']], cases: { 3: 12 } },
 };
 
 const pick = <T,>(arr: readonly T[], r: () => number): T => arr[Math.min(arr.length - 1, Math.floor(r() * arr.length))];
 
-// Each zone stocks a couple of products (the corner zones only Cola, as in the
-// fixture); which ones is seeded by the zone code so it never changes.
+// Each zone stocks a couple of products (the story zones BSD/BSE only Cola, as in
+// the fixture); which ones is seeded by the zone code so it never changes.
 function zoneProducts(block: string): Product[] {
-  if (block === 'BSA' || block === 'BSB') return [productByCode.get('4471')!];
+  if (block === 'BSD' || block === 'BSE') return [productByCode.get('4471')!];
   const r = seededRng('bszone:' + block);
   const n = 2 + Math.floor(r() * 2); // 2–3 products per zone
   const pool = [...PRODUCTS];

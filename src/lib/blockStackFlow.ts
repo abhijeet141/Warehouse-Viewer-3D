@@ -13,7 +13,7 @@ import type { DriveStep, ForkliftDriver } from './forklift';
 // pallet substitution → pick complete. This module owns the story (step order,
 // copy, rules, ledger) and mutates the demo stock; the scene supplies the 3D side
 // through FlowHost (glow boxes, camera, forklift, stock rebuild). Every rule shown
-// is the one in Task/FLD-69 (HLD §4–§6, block-stack-how-it-decides.md).
+// follows Task/FLD-69 (HLD, how-it-decides) and the FLD-68 Part 3 change list.
 
 export type FlowStage = 'Policies' | 'Putaway' | 'Allocation' | 'Picking' | 'Complete';
 export const FLOW_STAGES: FlowStage[] = ['Policies', 'Putaway', 'Allocation', 'Picking', 'Complete'];
@@ -58,7 +58,7 @@ function initialState(): FlowState {
     title: '', body: '', facts: [], table: null, ledger: [], notice: null, prompt: null,
     status: '', busy: false, paused: false, needsChoice: false, nextLabel: 'Next', isLast: false,
     auto: false, follow: true, speed: 1,
-    scenarios: [], totals: [], totalsZone: 'BSA',
+    scenarios: [], totals: [], totalsZone: 'BSD',
   };
 }
 
@@ -89,14 +89,14 @@ export type ClickTarget =
   | { kind: 'other' };
 
 // ---- scenario constants (the FLD-69 worked example) ---------------------------
-const ZONE = 'BSA';
-const AISLE = 'BS1';
-const GOODS_IN_X = -10000;   // on the front cross-aisle, just outside the BS1 mouth
+const ZONE = 'BSD';
+const AISLE = 'BS3';
+const GOODS_IN_X = -10000;   // on the front cross-aisle, just outside the BS3 mouth
 const STANDOFF = 1600;       // truck waits this far outside a lane's face line
 const SPEED = { drive: 5500, creep: 1500, insert: 700, lift: 1300, liftSlow: 350 };
 const READ_MS = 5200;        // auto-play dwell per step at 1×
 const NEW_POD = { product: '4471', batch: 'B7', cases: 40 };
-const ORDER = { id: 'ORD-1001', qty: 40, job: 'J-501', rule: 'R-12 · consumer orders · FEFO · podSubstitution = true' };
+const ORDER = { id: 'ORD-1001', qty: 40, job: 'J-501', rule: 'R-12 · consumer orders · oldest first · pallet substitution on' };
 
 const COLORS = {
   zone: 0x6366f1, ok: 0x22c55e, drop: 0xef4444, pick: 0xf59e0b, chosen: 0x38bdf8, candidate: 0x38bdf8, empty: 0x94a3b8,
@@ -289,7 +289,7 @@ export class BlockStackFlow {
   handleClick(t: ClickTarget) {
     if (!this.acceptsClicks) return;
     if (this.stepId === 'putaway-candidates') {
-      if (t.kind === 'other') { this.notice('deny', 'Not a block-stack lane', 'Pick one of the lanes on the floor in zone BSA.'); return; }
+      if (t.kind === 'other') { this.notice('deny', 'Not a block-stack lane', 'Pick one of the lanes on the floor in zone BSD.'); return; }
       this.chooseLane(t.lane.fullName);
     } else if (this.stepId === 'pick-scan') {
       if (t.kind !== 'pod') { this.notice('deny', 'Nothing to scan', 'Scan a pallet — the pallets you can reach are lit green.'); return; }
@@ -346,13 +346,13 @@ export class BlockStackFlow {
     const mk = (id: string, label: string, hint: string, target: unknown): FlowScenario =>
       ({ id, label, hint: target ? hint : 'no matching pallet in this stock', enabled: !!target });
     return [
-      mk('caseA', 'Case A', `Scan ${t.free?.face.code}: a free pallet of the class — plain swap`, t.free),
-      mk('caseB', 'Case B', `Scan ${t.caseB?.face.code}: booked to ${t.caseB?.face.allocation?.order}, whose job is still AVAILABLE — displaced onto ${this.X?.code}`, t.caseB),
-      mk('hash', 'Hash mismatch', `Scan ${t.hash?.face.code}: a different class — Q3 denies`, t.hash),
-      mk('deep', 'Deep pallet', `Scan ${t.deep?.face.code}: the allocated pallet itself, under the stack — not reachable`, t.deep),
-      mk('reserved', 'Reserved elsewhere', `Scan ${t.reserved?.face.code}: another picker holds its job — no displacement across a reserved job`, t.reserved),
-      mk('directed', 'Pallet-directed job', `Rule R-40 (podSubstitution off), then scan ${t.free?.face.code} — Q2 denies`, t.free),
-      mk('short', 'Part pallet', `Scan ${t.short?.face.code}: only ${t.short ? podAvailable(t.short.face) : 0} cases for a ${qtyText(this.job)} job — Q5 denies`, t.short),
+      mk('caseA', 'Case A · free pallet', `Scan ${t.free?.face.code}: a free pallet of the same class — the booking simply moves to it`, t.free),
+      mk('caseB', 'Case B · booked pallet', `Scan ${t.caseB?.face.code}: booked to ${t.caseB?.face.allocation?.order}, not started yet — that order is moved onto ${this.X?.code}`, t.caseB),
+      mk('hash', 'Other class', `Scan ${t.hash?.face.code}: a different class — not in the permitted set (2814)`, t.hash),
+      mk('deep', 'Buried pallet', `Scan ${t.deep?.face.code}: the allocated pallet itself, under the stack — not reachable`, t.deep),
+      mk('reserved', 'Reserved by a picker', `Scan ${t.reserved?.face.code}: another picker already holds its job — it is never moved (2818)`, t.reserved),
+      mk('directed', 'Substitution off', `A rule without pallet substitution (R-40), then scan ${t.free?.face.code} — refused (2815)`, t.free),
+      mk('short', 'Part pallet', `Scan ${t.short?.face.code}: only ${t.short ? podAvailable(t.short.face) : 0} cases free for a ${qtyText(this.job)} job — refused (2818)`, t.short),
     ];
   }
 
@@ -452,18 +452,18 @@ export class BlockStackFlow {
   // ---- POLICIES -----------------------------------------------------------------
 
   private enterPoliciesZones() {
-    const zones = ['BSA', 'BSB', 'BSC'].map((c) => this.host.segment(c)).filter((s): s is Segment => !!s);
+    const zones = ['BSD', 'BSE', 'BSF'].map((c) => this.host.segment(c)).filter((s): s is Segment => !!s);
     for (const z of zones) this.host.glow(`zone:${z.fullName}`, segBox(z), COLORS.zone, 0.1, 0.8);
     this.host.focus(zones.map((z) => segBox(z)), { dir: [-0.35, 0.62, -0.55], duration: 1500 });
     this.set({
-      title: 'Zones and stock-mix policies',
-      body: 'Block stack is floor storage in deep lanes worked from one end, so what shares a lane matters. FLD-69 gives each zone one stock-mix policy — a named subset of the stock hash keys — and each lane a single class hash (segments.currentStockMixHash). A tracked lane holds one class at a time.',
+      title: 'Block stack: one class of stock per lane',
+      body: 'Block-stack lanes are deep and worked from one end, so whatever shares a lane must be interchangeable. Each zone carries one stock-mix policy — the attributes a pallet must match to count as the same stock — and every lane holds one such class at a time.',
       facts: [
-        `BSA — ${this.zonePolicy('BSA')} · keys ${POLICIES[this.zonePolicy('BSA')!].keys.join(', ')}`,
-        `BSB — ${this.zonePolicy('BSB')} · keys ${POLICIES[this.zonePolicy('BSB')!].keys.join(', ')}`,
-        `BSC — ${this.zonePolicy('BSC')}`,
-        'Policy resolves most-specific-wins: a segment override, else the zone-account row (one zone ↔ one policy, per account).',
-        'trackStockMix = 1 on every block-stack lane; a lane with the flag off is never hash-checked.',
+        `BSD — ${this.zonePolicy('BSD')}: ${POLICIES[this.zonePolicy('BSD')!].label} (keys ${POLICIES[this.zonePolicy('BSD')!].keys.join(', ')})`,
+        `BSE — ${this.zonePolicy('BSE')}: ${POLICIES[this.zonePolicy('BSE')!].label} (keys ${POLICIES[this.zonePolicy('BSE')!].keys.join(', ')})`,
+        `BSF — ${this.zonePolicy('BSF')}`,
+        'A lane uses its own policy if it has one, otherwise its zone\'s — per account, so one lane can follow a different policy for each client.',
+        'Lanes with stock-mix tracking switched off are never checked (segments.trackStockMix).',
       ],
     });
   }
@@ -480,13 +480,13 @@ export class BlockStackFlow {
     const bank = this.host.segment(ZONE);
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.2, 0.75, 0.75], duration: 1400 });
     this.set({
-      title: 'What counts as the same stock',
-      body: `Under ${policy} (zone BSA) a Cola pallet of batch B7 and one of batch B9 are two classes and can never share a lane; under BS-PRODUCT-ONLY (zone BSB) they are one class and may. Same pallets, different fingerprints — the policy is the dial between purity and density.`,
-      table: { head: ['Lane', 'Pods', 'Class', 'Hash'], rows },
+      title: 'Same stock or not: the class fingerprint',
+      body: `Every pallet is fingerprinted on the policy's attributes. Under ${policy} (zone BSD) a Cola pallet of batch B7 and one of batch B9 are two classes and can never share a lane; under BS-PRODUCT-ONLY (zone BSE) they are one class and may. Same pallets, different fingerprints — the policy sets the balance between purity and density.`,
+      table: { head: ['Lane', 'Pallets', 'Class', 'Hash'], rows },
       facts: [
-        'Hash = SHA-256 over the pallet\'s values for the policy\'s keys (magma-pods GetPodMixHashes), one per policy in play.',
-        'A pallet carrying two batches is its own class — BSA06 can only ever share with an identical mixed pallet.',
-        'Empty lane ⇒ hash NULL: it takes the class of the first pallet put into it.',
+        'The fingerprint is a SHA-256 of the pallet\'s values for the policy\'s keys; magma-pods computes one per policy in play.',
+        'A pallet carrying two batches is its own class — BSD04 can only ever share with an identical mixed pallet.',
+        'An empty lane has no class (hash NULL): it takes the class of the first pallet put into it and keeps it until it is empty again.',
       ],
     });
   }
@@ -512,12 +512,12 @@ export class BlockStackFlow {
     const keyBatch = classKeyFor(product.code, [NEW_POD.batch], 'BS-PRODUCT-BATCH');
     const keyProd = classKeyFor(product.code, [NEW_POD.batch], 'BS-PRODUCT-ONLY');
     this.set({
-      title: 'Putaway — a pallet arrives',
-      body: `Goods-in has receipted pallet GI-2041: ${NEW_POD.cases} cases of ${product.code} ${product.name}, batch ${NEW_POD.batch}. Before any lane is looked at, magma-putaway fingerprints it once per policy in play for this warehouse and account (GetStockMixPoliciesInPlay → GetPodMixHashes) and the hashes ride on the reservation request.`,
+      title: 'Putaway: a pallet arrives',
+      body: `Goods-in has receipted pallet GI-2041: ${NEW_POD.cases} cases of ${product.code} ${product.name}, batch ${NEW_POD.batch}. Before any lane is considered, putaway fingerprints the pallet once per policy in play for this warehouse and account, and the fingerprints travel with the reservation request.`,
       facts: [
         `Under BS-PRODUCT-BATCH → ${this.classText('BS-PRODUCT-BATCH', keyBatch)}`,
         `Under BS-PRODUCT-ONLY → ${this.classText('BS-PRODUCT-ONLY', keyProd)}`,
-        'The pallet carries fingerprints, never an intent: the putaway RULE\'s zone list decides where it may go.',
+        'The pallet carries fingerprints, not a destination: the putaway rule\'s zones decide where it may go, exactly as before.',
       ],
       status: 'Truck at goods-in with GI-2041 on the forks.',
     });
@@ -535,12 +535,9 @@ export class BlockStackFlow {
       else verdict = 'drop-class';
       return { lane: s.lane, stock: s, verdict };
     });
-    // The engine has no preference of its own for the lane already holding the
-    // class (how-it-decides Q3): survivors run in putawayPreference order and the
-    // first suitable wins. This warehouse ranks its part-filled lanes first, fewest
-    // pallets first, so a pallet tops up an open stack instead of opening a lane.
-    const same = this.candidates.filter((c) => c.verdict === 'ok-same').sort((a, b) => a.stock.pods.length - b.stock.pods.length);
-    this.engineLane = same[0]?.lane ?? this.candidates.find((c) => c.verdict === 'ok-empty')?.lane ?? null;
+    // Survivors are taken in the zone's putaway order (lane number here) and the first
+    // suitable one wins; the engine has no preference for a part-filled lane (Q3).
+    this.engineLane = this.candidates.find((c) => c.verdict.startsWith('ok'))?.lane ?? null;
     this.putawayLane = null;
     const policy = this.zonePolicy(ZONE);
     const verdictText: Record<PutawayCandidate['verdict'], string> = {
@@ -559,15 +556,15 @@ export class BlockStackFlow {
     const bank = this.host.segment(ZONE);
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.15, 0.7, 0.8], duration: 1300 });
     this.set({
-      title: 'The rule points at zone BSA; the engine filters its lanes',
-      body: `The putaway rule's zones narrow the candidates to BSA — routing is untouched by FLD-69. Then every candidate lane is asked individually (isStockMixCompatible): untracked → accept; tracked and empty → accept; same hash for this lane's policy → accept; a different hash → dropped. The SQL pre-filter is a superset; the exact per-policy match is the Go gate.`,
-      table: { head: ['Lane', 'Pods', 'Holds', 'Verdict'], rows, mark: this.candidates.map((c, i) => (c.lane === this.engineLane ? i : -1)).filter((i) => i >= 0) },
+      title: 'The rule says zone BSD; the stock-mix gate filters its lanes',
+      body: `The putaway rule routes the pallet to zone BSD, as it always has. Each candidate lane is then checked on its own: tracking off → accept; empty → accept; same class under the lane's policy → accept; a different class → dropped. The lanes that pass are taken in the zone's putaway order and the first one wins — ${this.engineLane?.fullName ?? 'none'}${this.candidates.find((c) => c.lane === this.engineLane)?.verdict === 'ok-same' ? ', which already holds this class' : ''}.`,
+      table: { head: ['Lane', 'Pallets', 'Holds', 'Verdict'], rows, mark: this.candidates.map((c, i) => (c.lane === this.engineLane ? i : -1)).filter((i) => i >= 0) },
       facts: [
-        `Pallet class under ${policy}: ${this.classText(policy, pod.classKey)}.`,
-        `The engine itself has no preference for the lane already holding the class (how-it-decides Q3): survivors run in putawayPreference order and the first suitable wins. This warehouse ranks its part-filled lanes first, so the pallet tops up ${this.engineLane?.fullName ?? 'a lane'} instead of opening an empty one.`,
-        'Capacity is checked too: currentPodCount + 1 ≤ maximumPods.',
+        `GI-2041's class under ${policy}: ${this.classText(policy, pod.classKey)}.`,
+        'Capacity is checked as well: the lane\'s pallet count + 1 must not exceed its maximum.',
+        'The engine does not prefer a part-filled lane over an empty one: purity is guaranteed, density is a configuration choice (putaway order, home locations).',
       ],
-      prompt: `Click a lane in BSA to put GI-2041 away — the engine's own choice is outlined. Try a red lane to see the refusal.`,
+      prompt: `Click a lane in BSD to put GI-2041 there — the engine's own choice is outlined. Try a red lane to see the refusal.`,
       needsChoice: true,
       nextLabel: 'Use the engine\'s choice',
     });
@@ -579,24 +576,24 @@ export class BlockStackFlow {
     if (!c) {
       const s = this.host.laneStock().get(name);
       const zone = s?.lane.lane?.block ?? '?';
-      this.notice('deny', 'Outside the rule\'s zones', `${name} is in zone ${zone}. The putaway rule for this pallet names zone BSA only; lanes elsewhere are never candidates, whatever they hold.`);
+      this.notice('deny', 'Outside the rule\'s zones', `${name} is in zone ${zone}. The putaway rule for this pallet names zone BSD only; lanes elsewhere are never candidates, whatever they hold.`);
       return;
     }
     if (c.verdict === 'drop-full') {
-      this.notice('deny', 'Lane full', `${name} holds ${c.stock.pods.length} of maximumPods ${c.lane.lane!.maxPods}. currentPodCount + 1 would exceed the limit, so it is not a suitable segment.`);
+      this.notice('deny', 'Lane full', `${name} holds ${c.stock.pods.length} of ${c.lane.lane!.maxPods} pallets. One more would exceed its maximum, so it is not a suitable lane.`);
       return;
     }
     if (c.verdict === 'drop-class') {
       const policy = this.zonePolicy(ZONE);
-      this.notice('deny', 'Refused — stock mix policy violation (1942)',
-        `${name} holds ${this.classText(policy, c.stock.classKey!)}; GI-2041 is ${this.classText(policy, pod.classKey)}. Two classes in one tracked lane: the reservation engine drops the lane, and if an operator forced the move the upsert trigger in magma-pods would refuse the write with 1942.`);
+      this.notice('deny', 'Refused — stock-mix policy (error 1942)',
+        `${name} holds ${this.classText(policy, c.stock.classKey!)}; GI-2041 is ${this.classText(policy, pod.classKey)}. Two classes cannot share a tracked lane: the reservation engine drops the lane, and even a forced move would be refused by the stock write itself — "Segment may only hold stock matching on [product, batch]".`);
       return;
     }
     this.putawayLane = c.lane;
     this.notice('ok', c.verdict === 'ok-empty' ? `${name} accepted — empty lane` : `${name} accepted — same class`,
       c.verdict === 'ok-empty'
-        ? `${name} has no hash yet (NULL). Any class may open it; on confirm the trigger stamps it with ${hashLabel(this.zonePolicy(ZONE), pod.classKey)}.`
-        : `${name} already holds ${describeClassKey(c.stock.classKey!)} — the same hash as GI-2041, so the write will leave the lane pure.`);
+        ? `${name} has no class yet. Any class may open it; on confirm the lane is stamped with ${hashLabel(this.zonePolicy(ZONE), pod.classKey)}.`
+        : `${name} already holds ${describeClassKey(c.stock.classKey!)} — the same class as GI-2041, so the lane stays pure.`);
     this.set({ needsChoice: false, nextLabel: 'Reserve and move' });
     if (get(flowState).auto) this.scheduleAuto();
     else this.goto(this.i + 1);
@@ -628,7 +625,7 @@ export class BlockStackFlow {
     this.host.glow(`lane:${lane.fullName}`, laneBox(stock), COLORS.ok, 0.16, 0.9);
     this.set({
       title: 'Reserve → move → confirm',
-      body: `${lane.fullName} is reserved for GI-2041 (segment_reservation_matrix), the putaway job is created and the truck takes the pallet out. Block stack fills the back position first and stacks it before the next position is started — a truck cannot reach over a stack — so the pallet goes to position ${pod.index} of ${cfg.maxPods}: ${column === 0 ? 'back row' : column === cfg.deep - 1 ? 'front row' : `row ${cfg.deep - column}`}, level ${tier + 1}.`,
+      body: `${lane.fullName} is reserved for GI-2041, the putaway job is created and the truck takes the pallet out. A block-stack lane fills from the back and stacks each position to the top before the next is started — a truck cannot reach over a stack — so the pallet goes to position ${pod.index} of ${cfg.maxPods}: ${column === 0 ? 'back row' : column === cfg.deep - 1 ? 'front row' : `row ${cfg.deep - column}`}, level ${tier + 1}.`,
       status: `Driving GI-2041 to ${lane.fullName}…`,
     });
     const steps: DriveStep[] = [
@@ -679,11 +676,11 @@ export class BlockStackFlow {
     this.host.focus([laneBox(stock)], { dir: [-0.55, 0.5, lane.lane!.faceDir * 0.65], duration: 1400, aisle: this.host.segment(AISLE) });
     this.set({
       title: 'Putaway confirmed',
-      body: 'Every pod write goes through one choke point: the upsert trigger in magma-pods recomputes the destination lane\'s classes. One class → the hash is stamped or left unchanged; two → the write is refused with 1942; none → the hash is cleared. Putaway, moves and attribute edits all pass the same gate, which is why nothing else needs to know the rule.',
+      body: 'The confirm writes the pallet into the lane, and every stock write passes one gate in magma-pods that recomputes the lane\'s classes. One class → the lane\'s hash is stamped or left unchanged; two → the write is refused (1942); none → the hash is cleared. Putaway, moves and stock edits all pass the same gate, so nothing else needs to know the rule.',
       ledger: this.putawayLedger,
       facts: [
-        `currentPodCount ${stock.pods.length - 1} → ${stock.pods.length} ≤ maximumPods ${lane.lane!.maxPods}.`,
-        'A tracked lane with no policy resolved is reported (logUnpoliciedSegments) but never filled by guessing.',
+        `Pallet count ${stock.pods.length - 1} → ${stock.pods.length} of ${lane.lane!.maxPods}.`,
+        'A tracked lane whose policy cannot be resolved is reported, never filled by guessing.',
       ],
     });
   }
@@ -697,19 +694,14 @@ export class BlockStackFlow {
     for (const c of cands) this.host.glow(`pod:${c.pod.code}`, podBounds(c.pod, c.lane), COLORS.candidate, 0.16, 0.7, true);
     const bank = this.host.segment(ZONE);
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.3, 0.6, 0.75], duration: 1300 });
+    const lanesWith = new Set(cands.map((c) => c.pod.lane)).size;
     this.set({
-      title: 'Allocation — an order arrives',
-      body: `${ORDER.id} wants ${ORDER.qty} cases of 4471 Cola. Rule ${ORDER.rule.split(' · ')[0]} (consumer orders) allocates from zone BSA with FEFO, minimum shelf life 60 days. Allocation converts AVAILABLE into ALLOCATED on a pallet it names; it creates nothing and moves nothing — T = A + L is unchanged.`,
-      table: {
-        head: ['Pallet', 'Lane', 'Batch', 'Position'],
-        rows: cands.map((c) => {
-          const s = this.host.laneStock().get(c.pod.lane)!;
-          return [c.pod.code, c.pod.lane, c.pod.batches.join('+'), c.pod.index === s.pods.length ? 'face' : `${c.pod.index} of ${s.pods.length}`];
-        }),
-      },
+      title: 'Allocation: an order arrives',
+      body: `${ORDER.id} wants ${ORDER.qty} cases of 4471 Cola. Rule ${ORDER.rule.split(' · ')[0]} (consumer orders) allocates from zone BSD, oldest stock first, and allows pallet substitution. Allocation books stock on one named pallet — AVAILABLE becomes ALLOCATED — it creates nothing and moves nothing.`,
       facts: [
-        `${cands.length} AVAILABLE Cola pallets in BSA are eligible (batches B7, B9 and the mixed B7+B8 alike — the order line does not pin a batch).`,
-        `New in Part 3: the rule's podSubstitution flag is copied onto the pick job it creates.`,
+        `${cands.length} AVAILABLE Cola pallets in ${lanesWith} lanes of BSD are eligible — batches B7, B9, B11 and the mixed pallet alike; the order line does not pin a batch.`,
+        'The rule\'s "allow pallet substitution" flag is copied onto the pick job it creates, so the job keeps that permission even if the rule changes later.',
+        'Allocation itself is unchanged by block stack.',
       ],
     });
   }
@@ -733,22 +725,24 @@ export class BlockStackFlow {
       rule: ORDER.rule, podSubstitution: true, requiredBatch: null, status: 'AVAILABLE',
     };
     this.host.rebuildStock();
-    const above = stock.pods.length - X.index;
+    const above = stock.pods.filter((p) => p.column === X.column && p.tier > X.tier).length;
+    const inFront = stock.pods.filter((p) => p.column > X.column).length;
     this.host.glow(`pod:${X.code}`, podBounds(X, lane), COLORS.pick, 0.32, 1, true);
     this.host.focus([laneBox(stock)], { dir: [-0.6, 0.45, lane.lane!.faceDir * 0.65], duration: 1500, aisle: this.host.segment(AISLE) });
     const lines: LedgerLine[] = [
       { subject: X.code, before, after: allocText(X.allocation, X.cases) },
-      { subject: ORDER.job, before: '—', after: `fromPod ${X.code} · fromSegment ${X.lane} · fromZone ${ZONE} · podSubstitution = true · AVAILABLE` },
+      { subject: ORDER.job, before: '—', after: `fromPod ${X.code} · fromSegment ${X.lane} · fromZone ${ZONE} · allowPodSubstitution = true · AVAILABLE` },
     ];
     this.ledgerAll.push(...lines);
     const toppedUp = this.putawayLane?.fullName === X.lane;
+    const buried = `${plural(above, 'pallet')} stacked on it${inFront ? ` and ${plural(inFront, 'pallet')} in front of it` : ''}`;
     this.set({
       title: `The engine names ${X.code} — it has no depth model`,
-      body: `The rule's sort lands on ${X.code}: the bottom pallet of ${X.lane}${toppedUp ? ', the stack the putaway just topped up' : ''} — level ${X.tier + 1}, with ${plural(above, 'pallet')} standing on it${toppedUp ? ` (GI-2041, now ${this.newPod!.code}, among them)` : ''}. The engine cannot know: select_stock.go has no notion of depth. Pick job ${ORDER.job} is created against ${X.code} with podSubstitution = true, and the warehouse now owes the picker a pallet nobody can reach.`,
+      body: `Oldest first lands on ${X.code}: the first pallet put into ${X.lane}, so it stands at the back of the lane on the floor with ${buried}${toppedUp ? ` (GI-2041, now ${this.newPod!.code}, among them)` : ''}. The engine cannot know that — allocation has no notion of depth. Pick job ${ORDER.job} is created against ${X.code} with substitution allowed, and the picker is now owed a pallet nobody can reach.`,
       ledger: lines,
       facts: [
-        `Zone totals for class ${describeClassKey(X.classKey)}: AVAILABLE shrinks by ${ORDER.qty}, ALLOCATED grows by ${ORDER.qty} — the physical total T does not change.`,
-        'Part 3 does not change allocation at all; it makes the depth problem harmless at the point of pick.',
+        `Zone totals for class ${describeClassKey(X.classKey)}: AVAILABLE −${ORDER.qty}, ALLOCATED +${ORDER.qty}; the physical total does not change.`,
+        'Block stack does not change allocation; it makes the depth problem harmless at the point of pick.',
       ],
     });
   }
@@ -762,9 +756,16 @@ export class BlockStackFlow {
       const cfg = s.lane.lane;
       if (!cfg || cfg.block !== ZONE || !cfg.trackStockMix || s.pods.length === 0) continue;
       if (s.classKey !== X.classKey) continue;
+      if (s.lane.fullName === X.lane && s.pods.length < 2) continue; // the own lane only for its other pallets
       out.push({ lane: s.lane, stock: s, face: s.pods[s.pods.length - 1] });
     }
-    out.sort((a, b) => a.stock.pods.length - b.stock.pods.length || laneNumber(a.lane.fullName) - laneNumber(b.lane.fullName));
+    // The job's own lane first, then the fewest pallets, then the nearest; never more than the cap.
+    const own = laneNumber(X.lane);
+    out.sort((a, b) =>
+      (b.lane.fullName === X.lane ? 1 : 0) - (a.lane.fullName === X.lane ? 1 : 0) ||
+      a.stock.pods.length - b.stock.pods.length ||
+      Math.abs(laneNumber(a.lane.fullName) - own) - Math.abs(laneNumber(b.lane.fullName) - own) ||
+      laneNumber(a.lane.fullName) - laneNumber(b.lane.fullName));
     return out.slice(0, 10);
   }
 
@@ -785,18 +786,19 @@ export class BlockStackFlow {
     this.host.glow(`pod:${X.code}`, podBounds(X, laneX), COLORS.pick, 0.3, 1, true);
     this.host.chase(1500, aisle);
     this.set({
-      title: 'Picking — start-pick',
-      body: `The picker takes ${job.id}: /start-pick-job marks it RESERVED and the response now carries the substitutable set — every lane in zone BSA with the same hash and policy, in a pickable status, ORDER BY currentPodCount ASC and limited to 10. The emptier lane lists first, so honeycombing clears itself.`,
+      title: 'Picking: start-pick lists the lanes the picker may use',
+      body: `The picker takes ${job.id}: it is reserved to them, and the pick list now carries the substitutable set — the lanes of zone BSD holding the same class under the same policy, in a pickable status. The job's own lane comes first, then the lane with the fewest pallets, then the nearest; never more than the policy's cap of 10.`,
       table: {
-        head: ['Lane', 'Pods', 'Face pallet', 'Face status'],
+        head: ['Lane', 'Pallets', 'Face pallet', 'Face status'],
         rows: this.subSet.map((e) => [
           e.lane.fullName, String(e.stock.pods.length), e.face.code,
-          e.face.allocation ? `ALLOCATED ${e.face.allocation.order} (job ${e.face.allocation.jobStatus})` : 'AVAILABLE',
+          e.face.allocation ? `BOOKED ${e.face.allocation.order} (${e.face.allocation.jobStatus === 'RESERVED' ? 'picker on it' : 'not started'})` : 'FREE',
         ]),
       },
       facts: [
-        `BSA05 is not in the set: its lane hash is ${describeClassKey('4471|B9')}, a different class. Purity of the set is what makes substitution safe.`,
-        'The handheld can validate scans locally against this set — no server round trip until confirm.',
+        `BSD03 is not in the set: it holds ${describeClassKey('4471|B9')}, a different class. The set is pure by construction, which is what makes substitution safe.`,
+        'Scope is set per policy: this lane only, this zone, or the whole warehouse (new) — the job\'s zone first, other zones after, up to the cap.',
+        'The list is advisory: the handheld validates scans against it, and every check is run again at confirm.',
       ],
       status: `Truck leaving goods-in for ${X.lane}…`,
     });
@@ -813,7 +815,7 @@ export class BlockStackFlow {
     const X = this.X!;
     const laneX = this.host.segment(X.lane)!;
     const stockX = this.host.laneStock().get(X.lane)!;
-    const above = stockX.pods.length - X.index;
+    const above = stockX.pods.filter((p) => p.column === X.column && p.tier > X.tier).length;
     this.verdict = null;
     this.Y = null;
     this.host.glow(`pod:${X.code}`, podBounds(X, laneX), COLORS.pick, 0.3, 1, true);
@@ -823,10 +825,11 @@ export class BlockStackFlow {
     }
     this.set({
       title: 'At the lane: pick what you can reach',
-      body: `${X.code} sits under ${stockX.pods.slice(X.index).map((p) => p.code.slice(-2)).join(', ')} — level ${X.tier + 1}, ${plural(above, 'pallet')} above. The handheld's location and pallet gates now accept any member of the set, so the picker scans the pallet in front of them. On confirm, pickedFromPod = Y goes to magma-allocations, which runs SwapAllocation: Q1 scope, Q2 flag, Q3 hash, Q4 order line, Q5 quantity — Case A, Case B, or a denial before anything is written.`,
+      body: `${X.code} sits under ${stockX.pods.slice(X.index).map((p) => p.code.slice(-2)).join(', ')} — level ${X.tier + 1}, ${plural(above, 'pallet')} above — so the picker can reach only the face pallet. The handheld now accepts any pallet in the set, so they scan the one in front of them. On confirm the scanned pallet goes to SwapAllocation, which settles on Case A, Case B or a refusal before anything is written.`,
       facts: [
-        `Case A: the scanned pallet has enough AVAILABLE — it takes the allocation, ${X.code} is released.`,
-        `Case B: the scanned pallet is booked to another order whose job is still AVAILABLE — that order is displaced onto ${X.code}; it must accept ${X.code}, or the whole thing is denied. No cascade.`,
+        `Case A: the scanned pallet has enough free stock — it takes the booking and ${X.code} is released.`,
+        `Case B: the scanned pallet is booked to another order nobody has started — that order is moved onto ${X.code}, provided its own rule accepts it. One move, no chain reaction.`,
+        'Checks, in order: the job may swap (rule flag) → the pallet is in the permitted set → same class, fingerprinted again → enough stock, Case A or B → both order lines accept their new pallets (allocation\'s own check).',
       ],
       prompt: `Click a face pallet — green = free, amber = booked to another order — or pick a scenario below and the flow scans the right pallet for you.`,
       scenarios: this.computeScenarios(),
@@ -854,24 +857,24 @@ export class BlockStackFlow {
     const face = stockY.pods[stockY.pods.length - 1];
     if (!face || face.code !== Y.code) {
       const after = stockY.pods.length - Y.index;
-      return { kind: 'deny', reason: 'not reachable', text: `${Y.code} is position ${Y.index} of ${cfgY.maxPods} in ${Y.lane} with ${plural(after, 'pallet')} stacked after it. Only the face pallet${face ? ` (${face.code})` : ''} can be scanned — the system has no depth model, the picker's hands do.` };
+      return { kind: 'deny', reason: 'buried, not reachable', text: `${Y.code} is position ${Y.index} of ${cfgY.maxPods} in ${Y.lane} with ${plural(after, 'pallet')} stacked after it. Only the face pallet${face ? ` (${face.code})` : ''} can be scanned — the system has no depth model; the picker's hands do.` };
     }
     if (Y.code === X.code) return { kind: 'proposed', text: `${X.code} is itself the face pallet of ${X.lane}: pick it as allocated — no swap needed.` };
-    if (!job.podSubstitution) return { kind: 'deny', reason: 'pallet-directed', text: `Job ${job.id} is pallet-directed (${job.rule}): podSubstitution is off, so only ${X.code} may be picked.` };
-    if (cfgY.block !== job.zone) return { kind: 'deny', reason: 'outside the substitution scope', text: `${Y.code} stands in zone ${cfgY.block}; the substitution scope is the job's zone ${job.zone} (lanes sharing its policy). Cross-zone pallets are never offered, whatever they hold.` };
-    if (!cfgY.trackStockMix) return { kind: 'deny', reason: 'untracked lane', text: `${Y.lane} is not stock-mix tracked, so it carries no class hash to compare.` };
-    if (Y.classKey !== X.classKey) return { kind: 'deny', reason: 'stock class mismatch', text: `Q3 fails — hashes differ: ${X.code} is ${this.classText(cfgY.policy, X.classKey)}, ${Y.code} is ${this.classText(cfgY.policy, Y.classKey)}. Hash equality is the definition of substitutable under ${cfgY.policy}.` };
-    if (job.requiredBatch && !Y.batches.includes(job.requiredBatch)) return { kind: 'deny', reason: 'order line rejects the pallet', text: `Q4 fails — the order line requires batch ${job.requiredBatch}; ${Y.code} carries ${Y.batches.join('+')}.` };
+    if (!job.podSubstitution) return { kind: 'deny', reason: 'substitution off (2815)', text: `Job ${job.id} was allocated under ${job.rule}: pallet substitution is off, so only ${X.code} may be picked. The handheld offers no alternatives for such a job.` };
+    if (cfgY.block !== job.zone) return { kind: 'deny', reason: 'outside the permitted set (2814)', text: `${Y.code} stands in zone ${cfgY.block}. The policy's scope is the job's zone (${job.zone}), so lanes elsewhere are never offered; with warehouse scope they would be, up to the cap.` };
+    if (!cfgY.trackStockMix) return { kind: 'deny', reason: 'untracked lane (2814)', text: `${Y.lane} is not stock-mix tracked, so it has no class to compare and is never in the set.` };
+    if (Y.classKey !== X.classKey) return { kind: 'deny', reason: 'different class (2814)', text: `${Y.lane} holds ${this.classText(cfgY.policy, Y.classKey)}; the job's class is ${this.classText(cfgY.policy, X.classKey)}. The lane is not in the permitted set, so the scan is refused — and at confirm both pallets are fingerprinted again (2816 if they differ).` };
+    if (job.requiredBatch && !Y.batches.includes(job.requiredBatch)) return { kind: 'deny', reason: 'the order line does not accept it (2817)', text: `The order line requires batch ${job.requiredBatch}; ${Y.code} carries ${Y.batches.join('+')}.` };
     const avail = podAvailable(Y);
-    if (avail >= job.qty) return { kind: 'caseA', text: `Case A — ${Y.code} has ${avail} AVAILABLE and the job needs ${job.qty}. On confirm: ${Y.code} AVAILABLE → ALLOCATED {${job.order} · ${job.id}}, ${X.code} ALLOCATED → AVAILABLE, and ${job.id} is re-pointed to ${Y.code} in ${Y.lane}. No pallet moves, so the mixing check does not fire.` };
+    if (avail >= job.qty) return { kind: 'caseA', text: `Case A — ${Y.code} has ${avail} free and the job needs ${job.qty}. On confirm: ${Y.code} AVAILABLE → ALLOCATED {${job.order} · ${job.id}}, ${X.code} ALLOCATED → AVAILABLE, and ${job.id} is re-pointed to ${Y.code} in ${Y.lane}. No pallet moves, so the lane-mixing check never fires.` };
     const a = Y.allocation;
     if (a) {
-      if (a.jobStatus === 'RESERVED') return { kind: 'deny', reason: 'committed elsewhere', text: `${Y.code} is allocated to ${a.order} and its job ${a.job} is RESERVED — another picker holds it. Displacement never crosses a reserved job.` };
-      if (a.jobStatus === 'COMPLETE') return { kind: 'deny', reason: 'already picked', text: `${Y.code}'s allocation ${a.job} is complete.` };
-      if (avail + a.qty >= job.qty && X.cases >= a.qty) return { kind: 'caseB', displaced: a, text: `Case B — ${Y.code} holds ${a.order}'s allocation (${a.qty}, job ${a.job} AVAILABLE). On confirm ${a.order} is displaced onto ${X.code} — same class, ${X.cases} cases, so it accepts — and ${Y.code} is allocated to ${job.order} instead. Every displaced order must accept X or the swap is denied; there is no second-level cascade.` };
-      return { kind: 'deny', reason: 'not enough stock even after displacement', text: `${Y.code} offers ${avail} AVAILABLE + ${a.qty} displaceable = ${avail + a.qty} < ${job.qty} needed.` };
+      if (a.jobStatus === 'RESERVED') return { kind: 'deny', reason: 'booked to a job already in progress (2818)', text: `${Y.code} is booked to ${a.order} and its job ${a.job} is reserved by another picker. A job someone is already working on is never moved.` };
+      if (a.jobStatus === 'COMPLETE') return { kind: 'deny', reason: 'already picked', text: `${Y.code}'s booking ${a.job} is complete.` };
+      if (avail + a.qty >= job.qty && X.cases >= a.qty) return { kind: 'caseB', displaced: a, text: `Case B — ${Y.code} is booked to ${a.order} (${a.qty} cases, job ${a.job} not started). On confirm ${a.order} is moved onto ${X.code} — same class, ${X.cases} cases, and its rule accepts it — and ${Y.code} is booked to ${job.order} instead. Had ${a.order} not accepted ${X.code}, the whole swap would be refused; nothing is ever half-done.` };
+      return { kind: 'deny', reason: 'not enough stock, even after moving the other order (2818)', text: `${Y.code} offers ${avail} free + ${a.qty} that could be moved = ${avail + a.qty}, below the ${job.qty} needed.` };
     }
-    return { kind: 'deny', reason: 'not enough stock on the pallet', text: `${Y.code} has only ${avail} cases AVAILABLE; the job needs ${job.qty}. A part pallet cannot cover a whole-pallet demand.` };
+    return { kind: 'deny', reason: 'not enough stock on the pallet (2818)', text: `${Y.code} has only ${avail} cases free; the job needs ${job.qty} and there is no booking on it that could be moved.` };
   }
 
   private choosePallet(Y: LanePod, laneY: Segment) {
@@ -881,18 +884,18 @@ export class BlockStackFlow {
     this.host.clearGlows('scan:');
     if (v.kind === 'deny') {
       this.host.glow(`scan:${Y.code}`, podBounds(Y, laneY), COLORS.drop, 0.35, 1);
-      this.notice('deny', `Denied — ${v.reason}`, v.text);
+      this.notice('deny', `Refused — ${v.reason}`, v.text);
       this.set({ needsChoice: true, nextLabel: 'Scan the suggested pallet', status: `Scan of ${Y.code} refused before any write.` });
       if (get(flowState).auto) this.scheduleAuto();
       return;
     }
     this.host.glow(`scan:${Y.code}`, podBounds(Y, laneY), COLORS.chosen, 0.32, 1);
-    const title = v.kind === 'proposed' ? 'Proposed pallet scanned' : v.kind === 'caseA' ? 'Case A — plain swap' : 'Case B — displacement';
+    const title = v.kind === 'proposed' ? 'The named pallet scanned' : v.kind === 'caseA' ? 'Case A — the booking moves to this pallet' : 'Case B — the other order is moved';
     this.notice('ok', title, v.text);
     this.set({
       needsChoice: false, nextLabel: 'Confirm pick',
-      prompt: 'Confirm to run SwapAllocation — or scan a different pallet to change your mind.',
-      status: `${Y.code} scanned — confirm to run SwapAllocation.`,
+      prompt: 'Confirm to run the swap — or scan a different pallet to change your mind.',
+      status: `${Y.code} scanned — confirm to run the swap.`,
     });
     if (get(flowState).auto) this.scheduleAuto();
   }
@@ -914,7 +917,7 @@ export class BlockStackFlow {
     if (v.kind === 'caseB') {
       const displaced: Allocation = { ...v.displaced };
       X.allocation = displaced;
-      lines.push({ subject: `${displaced.job} (${displaced.order})`, before: `fromPod ${Y.code} · ${Y.lane}`, after: `fromPod ${X.code} · ${X.lane} (displaced, status ${displaced.jobStatus})` });
+      lines.push({ subject: `${displaced.job} (${displaced.order})`, before: `fromPod ${Y.code} · ${Y.lane}`, after: `fromPod ${X.code} · ${X.lane} (moved by the swap, job ${displaced.jobStatus === 'AVAILABLE' ? 'not started' : displaced.jobStatus})` });
     } else {
       X.allocation = null;
     }
@@ -942,8 +945,8 @@ export class BlockStackFlow {
     if (v.kind === 'caseB') this.host.glow(`pod:${X.code}`, podBounds(X, this.host.segment(X.lane)!), COLORS.pick, 0.16, 0.7);
     let body: string;
     if (v.kind === 'proposed') body = 'The scanned pallet is the allocated one, so confirm is the ordinary pick: ALLOCATED → PICKED on that pallet and the stock leaves the lane.';
-    else if (v.kind === 'caseA') body = `SwapAllocation commits in one transaction: ${Y.code} AVAILABLE → ALLOCATED for ${ORDER.job}, ${X.code} ALLOCATED → AVAILABLE, and the job is re-pointed (pod, pod line, segment, zone). The pallets never move, so the mixing check does not fire. Then the normal pick runs: ALLOCATED → PICKED and the stock leaves the lane.`;
-    else if (v.kind === 'caseB') body = `SwapAllocation commits in one transaction: ${v.displaced.order}'s allocation moves from ${Y.code} onto ${X.code} (its job ${v.displaced.job} is re-pointed, still AVAILABLE), ${Y.code} is allocated to ${ORDER.job} and the job is re-pointed to it. Every denial was checked before this write; nothing is half-done. Then the normal pick runs on ${Y.code}.`;
+    else if (v.kind === 'caseA') body = `The swap commits in one transaction: ${Y.code} AVAILABLE → ALLOCATED for ${ORDER.job}, ${X.code} ALLOCATED → AVAILABLE, and the job is re-pointed (pallet, line, lane, zone, job format). The journal records the two moves as an exchange (operation types 40 and 39), not as a de-allocation and a fresh allocation. The pallets never move, so the lane-mixing check does not fire. Then the normal pick runs: ALLOCATED → PICKED and the stock leaves the lane.`;
+    else if (v.kind === 'caseB') body = `The swap commits in one transaction: ${v.displaced.order}'s booking moves from ${Y.code} onto ${X.code} (job ${v.displaced.job} re-pointed, still not started), ${Y.code} is booked to ${ORDER.job} and ${ORDER.job} is re-pointed to it — journalled as an exchange (operation types 40 and 39). Every check passed before this write; nothing is half-done. Then the normal pick runs on ${Y.code}.`;
     else body = '';
     const f = laneY.lane!.faceDir;
     const cx = laneCentreX(laneY);
@@ -1024,17 +1027,18 @@ export class BlockStackFlow {
     if (bank) this.host.focus([segBox(bank)], { dir: [-0.35, 0.6, 0.7], duration: 1600 });
     let outcome: string;
     if (v.kind === 'proposed') outcome = `${this.job!.id} completed against its allocated pallet.`;
-    else if (v.kind === 'caseA') outcome = `${this.job!.id} completed against ${Y.code}; ${X.code} is AVAILABLE again for the next order — no one dug it out.`;
-    else if (v.kind === 'caseB') outcome = `${this.job!.id} completed against ${Y.code}; ${v.displaced.order} now holds ${X.code} and its picker will meet the same face-pallet logic when their turn comes.`;
+    else if (v.kind === 'caseA') outcome = `${this.job!.id} completed against ${Y.code}; ${X.code} is free again for the next order — nobody dug it out.`;
+    else if (v.kind === 'caseB') outcome = `${this.job!.id} completed against ${Y.code}; ${v.displaced.order} now holds ${X.code}, and its picker gets the same face-pallet freedom when their turn comes.`;
     else outcome = '';
     this.set({
       title: 'Pick complete',
-      body: `${outcome} Allocation decided the class; the picker picked any pallet of that class; the swap made the ledger agree with the picker's hands and refused only where another order would have been left worse off. Lanes stayed pure throughout — substitution re-labels stock, it never moves a pallet between lanes.`,
-      table: { head: ['Lane', 'Pods', 'Class', 'Booked'], rows },
+      body: `${outcome} Allocation decided the class; the picker took any pallet of that class; the swap made the records agree with the picker's hands and refused only where another order would have been left worse off. Lanes stayed pure throughout — substitution re-labels stock, it never moves a pallet between lanes.`,
+      table: { head: ['Lane', 'Pallets', 'Class', 'Booked'], rows },
       ledger: this.ledgerAll,
       facts: [
-        'Invariant: allocation and swap never change T = AVAILABLE + ALLOCATED per class; only the pick reduces it.',
-        'Still open in the design: replenishment picks from block stack (movement jobs, not pick jobs) are outside Part 3.',
+        'Invariant: allocation and the swap never change AVAILABLE + ALLOCATED per class; only the pick reduces it.',
+        'Also covered: a job allocated from HELD or RECEIPTED stock swaps only onto free stock of the same kind, and a whole-pallet job may take a bigger pallet when that pallet may be broken (the job becomes a case pick).',
+        'Outside this release: replenishment picks from block stack (movement jobs).',
       ],
       nextLabel: 'Restart',
       status: 'Truck back at the marshalling bay.',

@@ -120,11 +120,11 @@ export class RailControls {
       dir.normalize();
       out.push({ name: s.fullName, start, end, dir, length, height: s.dimensionZ });
     }
-    // Single-letter racking aisles first (A, B, … V), then longer-named zones such
-    // as the block-stack drive aisle (BS) — so prev/next and the picker walk the
-    // rack block in order and the block stack comes at the end.
+    // Floor order (centreline Z, then X): the block-stack drive aisles BS4 → BS3 →
+    // BS2, then the racking A … V — so prev/next, the picker and the tour all step
+    // neighbour to neighbour across the floor.
     out.sort((a, b) =>
-      (a.name.length - b.name.length) || a.name.localeCompare(b.name, undefined, { numeric: true }),
+      (a.start.z + a.end.z) - (b.start.z + b.end.z) || (a.start.x + a.end.x) - (b.start.x + b.end.x),
     );
     return out;
   }
@@ -140,6 +140,7 @@ export class RailControls {
     if (this.enabled || this.aisles.length === 0) return;
     this.enabled = true;
     this.height = this.opts.eyeHeight;
+    this.preferredHeight = this.opts.eyeHeight;
     this.setAisle(this.nearestAisle(), true);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
@@ -172,6 +173,18 @@ export class RailControls {
     return this.aisles.map((a) => a.name);
   }
 
+  // The eye height the user last chose (Q/E), restored whenever an aisle allows it.
+  private preferredHeight = 0;
+
+  // Eye height for an aisle: the preferred height, capped in low aisles (the
+  // block-stack drive aisles run under nothing, so the eye drops to ~2 m there).
+  targetHeightFor(index: number): number {
+    const a = this.aisles[index];
+    const preferred = this.preferredHeight || this.opts.eyeHeight;
+    if (!a) return preferred;
+    return Math.max(this.opts.minHeight, Math.min(preferred, a.height * 0.5));
+  }
+
   // Current distance along the active aisle's centreline, so the tour can pick
   // up from exactly where the user is standing rather than the aisle's start.
   get currentDist(): number {
@@ -184,11 +197,10 @@ export class RailControls {
     this.index = ((index % n) + n) % n;
     const a = this.aisles[this.index];
     this.dist = 0; // drop in at the start of the aisle, beside the first rack
-    // A low aisle (the block-stack drive aisle runs under nothing, ~4 m) drops the
-    // eye to a human-ish height so the stacks are seen from the floor rather than
-    // from the rack-level eye height the racking aisles use.
-    const cap = a.height * 0.5;
-    if (this.height > cap) this.height = Math.max(this.opts.minHeight, cap);
+    // A low aisle (the block-stack drive aisles run under nothing, ~4 m) drops the
+    // eye to a human-ish height so the stacks are seen from the floor; a tall aisle
+    // gives the preferred height back.
+    this.height = this.targetHeightFor(this.index);
     if (faceForward) {
       this.yaw = Math.atan2(-a.dir.x, -a.dir.z); // face down the aisle toward 'end'
       this.pitch = 0;
@@ -470,7 +482,7 @@ export class RailControls {
       if (this.keys.up) lift += 1;
       if (this.keys.down) lift -= 1;
       if (lift !== 0) {
-        this.height = clamp(
+        this.preferredHeight = this.height = clamp(
           this.height + lift * this.opts.verticalSpeed * dt,
           this.opts.minHeight,
           this.opts.maxHeight,

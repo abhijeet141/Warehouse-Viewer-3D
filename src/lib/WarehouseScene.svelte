@@ -18,10 +18,10 @@
   import { get } from 'svelte/store';
   import { disposeBlockStackTextures } from './blockStackTextures';
   import {
-    buildDemoLaneStock, describeClass, describeContents, describePodPosition, podStatus,
-    type LanePod, type LaneStock,
+    BS, buildDemoLaneStock, describeClass, describeContents, describePodPosition, podStatus,
+    type LanePod, type LaneStock, type PodStatus,
   } from '../data/blockStack';
-  import type { Segment, SegmentType, LaneDbInfo } from '../types';
+  import type { Segment, SegmentType } from '../types';
 
   export let segments: Segment[];
   export let visibleTypes: Set<SegmentType>;
@@ -31,9 +31,6 @@
   // Building shell (roof, walls, columns, lights) visibility — toggled from the
   // App header. Off = open overview that can pull back past the walls.
   export let showShell = true;
-  // DB mode: the pallets standing in the lanes come from location_service + the pods
-  // service instead of the seeded demo fill (null → demo).
-  export let stockSource: ((lanes: Segment[]) => Map<string, LaneStock>) | null = null;
   export let camera: {
     position: [number, number, number];
     fov?: number;
@@ -127,14 +124,10 @@
     block: string; policy: string | null; tracked: boolean;
     pods: number; maxPods: number; deep: number; tiers: number;
     classLabel: string | null; contents: string | null; face: string | null; allocated: number;
-    db?: LaneDbInfo; // DB mode: the lane's own record
   }
   interface PodHoverInfo {
     code: string; position: string; product: string; batches: string; cases: string;
-    status: string; allocated: boolean; order: string | null;
-    quantities?: { type: string; text: string }[]; // DB mode: every quantity type on the pallet
-    trail?: string | null;                          // DB mode: pick job / bucket / drop location
-    uuid?: string; lines?: string[]; podType?: string | null; // DB mode: the real pod
+    status: PodStatus; order: string | null;
   }
   let hoverInfo: {
     fullName: string;
@@ -173,6 +166,7 @@
   let clock: THREE.Clock;
   let mode: 'orbit' | 'walk' = 'orbit';
   let aisleLabel = '';
+  let aisleZones = ''; // block-stack drive aisle: the zones on its two sides
   let aisleIndex = 0;
   let aisleTotal = 0;
   let aislePickerOpen = false;
@@ -196,7 +190,17 @@
   // Tour showcase: the whole rack LEVEL (shelf) currently being inspected, plus
   // the list of storage locations on it for the floating panel.
   let tourLevel: string | null = null;
+  // Block-stack drive aisles (floorStorage AISLE segments): the tour starts in them.
+  const driveAisleNames = new Set<string>();
   let tourLevelInfo: { level: string; levelSeg: Segment; spaces: Segment[] } | null = null;
+  // Block-stack showcase: the level of the faced three lanes the tour is looking at,
+  // with the pallets standing on it — the drive-aisle counterpart of the level panel.
+  interface StackLevelInfo {
+    block: string; lanes: string[]; level: number; tiers: number; elevation: number;
+    policy: string | null; layout: string;
+    pods: { lane: string; code: string; product: string; batch: string; cases: number; status: PodStatus; order: string | null }[];
+  }
+  let tourStackInfo: StackLevelInfo | null = null;
   // Indices for resolving a space → its level + sibling locations, and a bay → its
   // shelves (bottom-to-top) for the tour's per-level inspection.
   const levelByName = new Map<string, Segment>();
@@ -791,7 +795,7 @@
       if (i >= 0) blockStock!.hidePod(i);
     },
     rebuildStock: rebuildBlockStock,
-    resetStock() { laneStock = (stockSource ?? buildDemoLaneStock)(laneSegments); rebuildBlockStock(); },
+    resetStock() { laneStock = buildDemoLaneStock(laneSegments); rebuildBlockStock(); },
   };
 
   // Picker's view: drop the walkthrough camera onto the drive aisle beside the
@@ -804,13 +808,16 @@
       return;
     }
     if (!truck || !truck.group.visible || !rail) return;
-    const idx = rail.aisleNames.indexOf(lastChaseAisle?.fullName ?? 'BS1');
+    const idx = rail.aisleNames.indexOf(lastChaseAisle?.fullName ?? 'BS3');
     if (idx < 0) return;
     enterWalk(idx);
     const a = rail.aisles[idx];
     const along = truck.group.position.clone().sub(a.start).dot(a.dir);
     const h = new THREE.Vector3(Math.cos(truck.group.rotation.y), 0, -Math.sin(truck.group.rotation.y));
-    rail.setPose({ dist: Math.max(0, Math.min(a.length, along - 2500)), yaw: Math.atan2(-h.x, -h.z), pitch: 0.12, height: 1700 });
+    const dist = Math.max(0, Math.min(a.length, along - 2500));
+    // Look at the spot just ahead of the forks, so the truck and the lane it works share the frame.
+    const look = truck.group.position.clone().addScaledVector(h, 2500).sub(a.start.clone().addScaledVector(a.dir, dist));
+    rail.setPose({ dist, yaw: Math.atan2(-look.x, -look.z), pitch: 0.12, height: 1700 });
   }
 
   // Exported for the App-header button: open the walk-through (from the overview;
@@ -946,6 +953,59 @@
     hoverInfo = null;
     tourLevel = null;
     tourLevelInfo = null;
+    tourStackInfo = null;
+  }
+
+  // Block-stack showcase: the three faced lanes outlined as columns, the level
+  // being looked at boxed across them, and the Block Stack Level panel listing the
+  // pallets on it — the same shape as the racking's shelf showcase, no hover card.
+  function applyStackLevelShowcase(laneName: string, tier: number, key: string) {
+    if (key === tourLevel) return;
+    const lane = laneByName.get(laneName);
+    if (!lane) { clearHighlight(); return; }
+    const triple = laneTriple(lane);
+    const band = stackLevelBand(triple, tier);
+    if (!band) { clearHighlight(); return; }
+    if (highlightGroup) fadingHighlights.push(highlightGroup);
+    highlightedKey = null;
+    hoverInfo = null;
+    tourLevel = key;
+    tourLevelInfo = null;
+    // One box around the pallet you can see at this level in each of the three lanes
+    // (the one nearest the face; the ones behind it stay unboxed) — the same fill the
+    // racking shelf gets — so nothing is ever drawn over empty air or through a stack.
+    const group = new THREE.Group();
+    if (band.pods.length) {
+      const front = new Map<string, { lane: Segment; pod: LanePod }>();
+      for (const it of band.pods) { const cur = front.get(it.lane.fullName); if (!cur || it.pod.column > cur.pod.column) front.set(it.lane.fullName, it); }
+      for (const { lane: l, pod } of front.values()) group.add(makeHighlightGroup(podSegmentOf(pod, l)));
+    } else {
+      group.add(makeHighlightGroup({
+        fullName: `${lane.fullName}:L${tier + 1}`, type: 'LANE',
+        coordinateX: band.x0, coordinateY: band.y0, coordinateZ: band.z0,
+        dimensionX: band.x1 - band.x0, dimensionY: band.y1 - band.y0, dimensionZ: band.z1 - band.z0,
+        offsetX: 0, offsetY: 0, offsetZ: 0,
+      }));
+    }
+    applyHighlightFade(group, 0);
+    worldGroup.add(group);
+    highlightGroup = group;
+    const cfg = lane.lane!;
+    tourStackInfo = {
+      block: cfg.block,
+      lanes: triple.map((l) => l.fullName),
+      level: tier + 1,
+      tiers: cfg.tiers,
+      elevation: band.z0,
+      policy: cfg.policy,
+      layout: `${cfg.deep} deep × ${cfg.tiers} high`,
+      pods: band.pods
+        .sort((p, q) => p.lane.coordinateX - q.lane.coordinateX || p.pod.column - q.pod.column)
+        .map(({ lane: l, pod: p }) => ({
+          lane: l.fullName, code: p.code, product: `${p.product.code} ${p.product.name}`,
+          batch: p.batches.join(' + '), cases: p.cases, status: podStatus(p), order: p.allocation ? p.allocation.order : null,
+        })),
+    };
   }
 
   // Tour showcase: highlight the whole rack LEVEL (shelf) being inspected and
@@ -954,7 +1014,12 @@
   function applyLevelShowcase(levelName: string) {
     if (levelName === tourLevel) return;
     const lvl = levelByName.get(levelName);
-    if (!lvl) { clearHighlight(); return; }
+    if (!lvl) {
+      const m = /^stack:(.+):(\d+)$/.exec(levelName);
+      if (m) { applyStackLevelShowcase(m[1], Number(m[2]), levelName); return; }
+      clearHighlight();
+      return;
+    }
     if (highlightGroup) fadingHighlights.push(highlightGroup); // cross-fade out the old shelf
     highlightedKey = null;
     hoverInfo = null;
@@ -1026,43 +1091,20 @@
       contents: st ? describeContents(st) : null,
       face: face ? face.code : null,
       allocated: pods.filter((p) => p.allocation).length,
-      db: cfg.db,
     };
   }
 
   function podInfoOf(pod: LanePod, seg: Segment): PodHoverInfo {
     const cfg = seg.lane!;
     const count = laneStock.get(seg.fullName)?.pods.length ?? 0;
-    const real = !!pod.uuid; // DB mode: a real pod with its lines
-    const clip = (t: string, n = 44) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
-    const nProducts = new Set((pod.lines ?? []).map((l) => l.product)).size;
-    const qs = pod.quantities ?? [];
-    const hasAlloc = !!pod.allocation || qs.some((q) => q.type === 'ALLOCATED');
-    const hasAvail = qs.some((q) => q.type === 'AVAILABLE');
     return {
-      allocated: hasAlloc,
-      quantities: real ? qs.map((q) => ({ type: q.type, text: q.label })) : undefined,
-      code: real ? pod.uuid!.slice(-12) : pod.code,
+      code: pod.code,
       position: describePodPosition(pod, cfg, count),
-      product: real
-        ? (nProducts === 1 ? `${pod.product.code} · ${clip(pod.product.name)}` : nProducts ? `${nProducts} products · mixed pallet` : 'no pod lines')
-        : `${pod.product.code} ${pod.product.name}`,
-      batches: pod.batches.length ? pod.batches.join(' + ') + (pod.batches.length > 1 ? ' (mixed pallet)' : '') : 'none',
-      cases: real ? `${pod.cases} in total` : `${pod.cases} / ${pod.product.casesPerPallet} cases`,
-      status: real ? (hasAlloc ? (hasAvail ? 'PART ALLOCATED' : 'ALLOCATED') : (qs[0]?.type ?? 'AVAILABLE')) : podStatus(pod),
-      order: pod.allocation
-        ? (real ? `${pod.allocation.qty} allocated · ${pod.allocation.order} · ${pod.allocation.job}` : `${pod.allocation.order} · ${pod.allocation.job} (job ${pod.allocation.jobStatus})`)
-        : null,
-      trail: pod.place === 'bucket'
-        ? `In a picker's bucket${pod.bucket ? ' …' + pod.bucket.slice(-12) : ''} — picked${pod.pickJob?.from ? ' from ' + pod.pickJob.from : ''}, not dropped yet${pod.pickJob ? ` (job ${pod.pickJob.id} ${pod.pickJob.status}${pod.pickJob.to ? ' → ' + pod.pickJob.to : ''})` : ''}`
-        : pod.place === 'drop'
-          ? `Dropped at ${cfg.block}`
-          : pod.pickJob
-            ? `Pick job ${pod.pickJob.id} · ${pod.pickJob.status}${pod.pickJob.to ? ' → ' + pod.pickJob.to : ''}${pod.pickJob.order !== null ? ' · order ' + pod.pickJob.order : ''}`
-            : null,
-      uuid: pod.uuid,
-      lines: pod.lines?.map((l) => `${l.product} × ${l.qty} ${l.uom}${l.batches.length ? ' · batch ' + l.batches.join(' + ') : ''}${l.allocated ? ` · ${l.allocated} allocated` : ''}`),
-      podType: pod.podType ?? null,
+      product: `${pod.product.code} ${pod.product.name}`,
+      batches: pod.batches.join(' + ') + (pod.batches.length > 1 ? ' (mixed pallet)' : ''),
+      cases: `${pod.cases} / ${pod.product.casesPerPallet} cases`,
+      status: podStatus(pod),
+      order: pod.allocation ? `${pod.allocation.order} · ${pod.allocation.job} (job ${pod.allocation.jobStatus})` : null,
     };
   }
 
@@ -1340,7 +1382,7 @@
     const a = rail?.aisles[i];
     if (!a) return [];
     const xs = bayXsByAisle.get(aisleLetterOf(a.name));
-    if (!xs) return [];
+    if (!xs) return driveAisleNames.has(a.name) ? laneStopsForAisle(a) : [];
     const out = new Set<number>();
     for (const x of xs) {
       const d = (x - a.start.x) * a.dir.x; // distance along the aisle (runs along X)
@@ -1349,10 +1391,157 @@
     return [...out].sort((p, q) => p - q);
   }
 
+  // "BSM BSN · BSP BSR": the zones whose lanes face a drive aisle, one group per side.
+  function zoneLabelFor(name: string): string {
+    const a = rail?.aisles.find((x) => x.name === name);
+    if (!a || !driveAisleNames.has(name)) return '';
+    const rows = new Map<number, Set<string>>();
+    for (const l of lanesFacingAisle(a)) (rows.get(l.coordinateY) ?? rows.set(l.coordinateY, new Set()).get(l.coordinateY)!).add(l.lane!.block);
+    return [...rows.entries()].sort((p, q) => q[0] - p[0]).map(([, set]) => [...set].sort().join(' ')).join(' · ');
+  }
+
+  // Lanes whose face opens onto a drive aisle, worked out once per aisle.
+  const laneFaceCache = new Map<string, Segment[]>();
+  function lanesFacingAisle(a: { name: string; start: THREE.Vector3 }): Segment[] {
+    const cached = laneFaceCache.get(a.name);
+    if (cached) return cached;
+    const seg = segments.find((sg) => sg.fullName === a.name);
+    const half = ((seg?.dimensionY ?? 5600) * hScale) / 2 + 300;
+    const list = laneSegments.filter((l) => {
+      const cfg = l.lane!;
+      const faceZ = (cfg.faceDir > 0 ? l.coordinateY + l.dimensionY : l.coordinateY) * hScale;
+      return Math.abs(faceZ - a.start.z) <= half;
+    });
+    laneFaceCache.set(a.name, list);
+    return list;
+  }
+
+  // Block-stack drive aisle: three showcase stops spread along it, placed where the
+  // three lanes in line hold stock on BOTH sides of the aisle (so each turn of the
+  // head meets full columns), the densest such spot near each third of the aisle.
+  // Falls back to one complete side, then to any stock, then to any lane.
+  function laneStopsForAisle(a: { name: string; start: THREE.Vector3; dir: THREE.Vector3; length: number }): number[] {
+    const count = (l: Segment) => laneStock.get(l.fullName)?.pods.length ?? 0;
+    const byX = new Map<number, Segment[]>();
+    for (const l of lanesFacingAisle(a)) {
+      const x = Math.round(l.coordinateX + l.dimensionX / 2);
+      (byX.get(x) ?? byX.set(x, []).get(x)!).push(l);
+    }
+    const scored = [...byX].map(([x, lanes]) => {
+      let completeSides = 0;
+      let pods = 0;
+      let minPods = Infinity; // the shortest of the six columns: tall everywhere reads best
+      for (const l of lanes) {
+        const tri = laneTriple(l);
+        if (tri.length === 3 && tri.every((t) => count(t) > 0)) completeSides++;
+        for (const t of tri) { pods += count(t); minPods = Math.min(minPods, count(t)); }
+      }
+      return { d: (x - a.start.x) * a.dir.x, sides: lanes.length, completeSides, pods, minPods: Number.isFinite(minPods) ? minPods : 0 };
+    }).filter((c) => c.d >= 0 && c.d <= a.length);
+    if (scored.length === 0) return [];
+    const both = scored.filter((c) => c.sides === 2 && c.completeSides === 2);
+    const one = scored.filter((c) => c.completeSides >= 1);
+    const any = scored.filter((c) => c.pods > 0);
+    const pool = both.length ? both : one.length ? one : any.length ? any : scored;
+    const out = new Set<number>();
+    for (const frac of [1 / 6, 1 / 2, 5 / 6]) {
+      const want = frac * a.length;
+      const near = pool.filter((c) => Math.abs(c.d - want) <= a.length / 6);
+      const pick = (near.length ? near : pool).reduce((b, c) =>
+        c.minPods > b.minPods || (c.minPods === b.minPods && (c.pods > b.pods || (c.pods === b.pods && Math.abs(c.d - want) < Math.abs(b.d - want)))) ? c : b);
+      out.add(Math.round(pick.d));
+    }
+    return [...out].sort((p, q) => p - q);
+  }
+
+  // A lane with its neighbour either side in the same row: the three columns the
+  // showcase outlines together.
+  function laneTriple(lane: Segment): Segment[] {
+    return laneSegments
+      .filter((l) => l.lane?.block === lane.lane?.block && l.coordinateY === lane.coordinateY && Math.abs(l.coordinateX - lane.coordinateX) <= lane.dimensionX * 1.5)
+      .sort((p, q) => p.coordinateX - q.coordinateX);
+  }
+
+  // Block-stack showcase plan: the lane the camera faces across the aisle (never a
+  // stack seen through an empty lane from the bank behind) and its neighbours either
+  // side, one entry per level they stack to, floor to top — the drive-aisle
+  // counterpart of a bay's shelves. An empty triple sweeps its nominal levels.
+  function planStackInspection(): { pitch: number; level: string }[] | null {
+    const laneInst = tierInstancedMeshes.get('LANE');
+    const a = rail?.aisles[rail.index];
+    if (!laneInst || !a) return null;
+    const facing = new Set(lanesFacingAisle(a).map((l) => l.fullName));
+    perspectiveCamera.updateMatrixWorld();
+    raycaster.setFromCamera(TOUR_AIM, perspectiveCamera);
+    const prevFar = raycaster.far;
+    raycaster.far = 14000;
+    const hits = raycaster.intersectObject(laneInst, false);
+    raycaster.far = prevFar;
+    const hit = hits.find((h) => h.instanceId !== undefined && facing.has(laneSegments[h.instanceId]?.fullName));
+    if (!hit) return null;
+    const lane = laneSegments[hit.instanceId!];
+    const cfg = lane.lane!;
+    const triple = laneTriple(lane);
+    const cam = perspectiveCamera.position;
+    // Levels every lane of the triple reaches read as one slab across three columns;
+    // only when there are none do the partial levels get swept.
+    const bands: { t: number; band: StackBand }[] = [];
+    for (let t = 0; t < cfg.tiers; t++) {
+      const band = stackLevelBand(triple, t);
+      if (band) bands.push({ t, band });
+    }
+    const complete = bands.filter((b) => b.band.complete);
+    const use = complete.length ? complete : bands;
+    const plan = use.map(({ t, band }) => {
+      const bx = (band.x0 + band.x1) / 2;
+      const bz = ((band.y0 + band.y1) / 2) * hScale;
+      const wy = ((band.z0 + band.z1) / 2) * vScale;
+      return { pitch: Math.atan2(wy - cam.y, Math.hypot(bx - cam.x, bz - cam.z)), level: `stack:${lane.fullName}:${t}` };
+    });
+    return plan.length ? plan : null;
+  }
+
+  // One level across a lane triple: the box around the pallets standing at that
+  // tier (any depth, any of the three lanes), and whether every lane reaches it. A
+  // level nobody stacks to is skipped unless the whole triple is empty, in which
+  // case the nominal tier heights are used.
+  interface StackBand { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number; complete: boolean; pods: { lane: Segment; pod: LanePod }[] }
+  function stackLevelBand(triple: Segment[], tier: number): StackBand | null {
+    const pods: { lane: Segment; pod: LanePod }[] = [];
+    const lanesAt = new Set<string>();
+    let any = false;
+    for (const l of triple) {
+      const st = laneStock.get(l.fullName);
+      if (!st) continue;
+      if (st.pods.length) any = true;
+      for (const p of st.pods) if (p.tier === tier && showStock) { pods.push({ lane: l, pod: p }); lanesAt.add(l.fullName); }
+    }
+    if (pods.length) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const { lane, pod } of pods) {
+        const b = podBounds(pod, lane);
+        x0 = Math.min(x0, b.x0); x1 = Math.max(x1, b.x1);
+        y0 = Math.min(y0, b.y0); y1 = Math.max(y1, b.y1);
+        z0 = Math.min(z0, b.z0); z1 = Math.max(z1, b.z1);
+      }
+      return { x0, x1, y0, y1, z0, z1, complete: lanesAt.size === triple.length, pods };
+    }
+    if (any || !showStock) return null;
+    const first = triple[0];
+    const last = triple[triple.length - 1];
+    return {
+      x0: first.coordinateX, x1: last.coordinateX + last.dimensionX, y0: first.coordinateY, y1: first.coordinateY + first.dimensionY,
+      z0: tier * BS.TIER_PITCH, z1: (tier + 1) * BS.TIER_PITCH, complete: false, pods: [],
+    };
+  }
+
   // For the tour: every shelf of the bay the camera currently faces, paired with
   // the pitch elevation to look at it (ascending, bottom→top). The tour sweeps the
   // pitch across these and highlights the nearest shelf as it goes.
   function planVerticalInspection(): { pitch: number; level: string }[] | null {
+    // In a drive aisle the camera faces pallet stacks; the racking beyond them must
+    // not be picked up through a stack.
+    if (driveAisleNames.has(rail?.aisles[rail.index]?.name ?? '')) return planStackInspection();
     const spaceInst = tierInstancedMeshes.get('SPACE');
     if (!spaceInst) return null;
     raycaster.setFromCamera(TOUR_AIM, perspectiveCamera);
@@ -1360,7 +1549,7 @@
     raycaster.far = 14000;
     const hits = raycaster.intersectObject(spaceInst, false);
     raycaster.far = prevFar;
-    if (!hits.length || hits[0].instanceId === undefined) return null;
+    if (!hits.length || hits[0].instanceId === undefined) return planStackInspection(); // no rack ahead: a pallet stack?
     const seg = spaceSegments[hits[0].instanceId];
     if (!seg) return null;
     const levels = levelsByBay.get(bayNameOf(levelNameOf(seg.fullName)));
@@ -1439,9 +1628,9 @@
     tourSpeedOpen = false;
     tourEntering = true;
 
-    const idx = 0; // aisle 1 (sorted) — a consistent presentation start
+    const idx = tour.route?.[0] ?? 0; // the route's first aisle — the block stack
     const a = rail.aisles[idx];
-    const eyeY = walk.eyeHeight * vScale;
+    const eyeY = rail.targetHeightFor(idx); // the drive aisles are walked at ~2 m
     const dirH = a.dir.clone(); dirH.y = 0; dirH.normalize();
 
     // The fly-in is split into two legs so the camera always enters along the
@@ -1677,7 +1866,7 @@
       moveSpeed: walk.moveSpeed,
     };
     const r = new RailControls(perspectiveCamera, canvas, segs, opts);
-    r.onChange = (info) => { aisleIndex = info.index; aisleLabel = info.name; aisleTotal = info.total; };
+    r.onChange = (info) => { aisleIndex = info.index; aisleLabel = info.name; aisleTotal = info.total; aisleZones = zoneLabelFor(info.name); };
     return r;
   }
 
@@ -1761,6 +1950,14 @@
         const t = pickHover();
         return t ? { kind: t.kind, seg: t.seg.fullName, pod: t.kind === 'pod' ? t.pod.code : null } : null;
       };
+      (window as any).__tick = (dt: number, render = true) => {
+        stepCamTween();
+        if (mode === 'walk') {
+          if (tourActive && !tourPaused) { tour.update(dt * tourSpeed); updateTourHover(); } else rail.update(dt);
+        } else { applyOrbitPan(dt); controls.update(); }
+        perspectiveCamera.updateMatrixWorld(); // raycasts read it; only a render refreshes it otherwise
+        if (render) renderer.render(scene, perspectiveCamera);
+      };
       (window as any).__renderFrame = () => {
         if (mode === 'walk') rail.update(1 / 60);
         else { applyOrbitPan(1 / 60); controls.update(); }
@@ -1790,10 +1987,12 @@
     tour.onStop = () => { tourActive = false; tourPaused = false; };
     tour.planVertical = planVerticalInspection; // per-level pitch plan for the showcase
     tour.bayCenters = bayCentersForAisle;       // snap showcase stops onto bay centres
-    // The block-stack drive aisle is walkable but not part of the autopilot's
-    // serpentine: it sits off the rack block, where the neighbour U-turns don't apply.
-    const tourExcluded = new Set(segments.filter((s) => s.type === 'AISLE' && s.floorStorage).map((s) => s.fullName));
-    tour.route = rail.aisles.map((_, i) => i).filter((i) => !tourExcluded.has(rail.aisles[i].name));
+    // The rail orders the aisles across the floor — BS4 → BS3 → BS2, then A → V — so
+    // the tour walks them in turn: it starts in the block stack, the last drive aisle
+    // U-turns straight into racking aisle A, and the lap back around the outside
+    // returns to BS4.
+    for (const sg of segments) if (sg.type === 'AISLE' && sg.floorStorage) driveAisleNames.add(sg.fullName);
+    tour.route = rail.aisles.map((_, i) => i);
     // Grabbing the controls mid-playback takes over and ends the tour. While the
     // tour is PAUSED the user is meant to roam freely, so input is left alone —
     // resume continues from wherever they end up.
@@ -1883,7 +2082,7 @@
     spaceSegments = buckets.get('SPACE') ?? [];
     laneSegments = buckets.get('LANE') ?? [];
     for (const l of laneSegments) laneByName.set(l.fullName, l);
-    laneStock = (stockSource ?? buildDemoLaneStock)(laneSegments); // seeded demo pallets, or the DB's
+    laneStock = buildDemoLaneStock(laneSegments); // seeded demo pallets per lane
     for (const s of segments) rackTopY = Math.max(rackTopY, s.coordinateZ + s.dimensionZ);
 
     // Index levels and group each level's storage locations, for the tour's
@@ -1939,7 +2138,7 @@
 
   function animate() {
     rafId = requestAnimationFrame(animate);
-    const dt = clock ? clock.getDelta() : 0;
+    const dt = clock ? Math.min(clock.getDelta(), 0.1) : 0; // a hidden tab must not leap the tour ahead on return
     updateHighlightFade(dt); // smooth hover fade in/out, runs in every mode
     updateFlow(dt); // the forklift keeps working whichever camera is in use
     if (mode === 'orbit') {
@@ -2077,14 +2276,6 @@
         {@const ln = hoverInfo.lane}
         <!-- Block-stack lane: what it holds under its policy, how full, which pallet is at the face. -->
         <div class="loc-lane">
-          {#if ln.db?.role === 'pick-location'}
-            <!-- DB mode: a slot on a pick location pad, not a block-stack lane. -->
-            <div class="ll-grid">
-              <span class="ll-k">Pick location</span><span class="ll-v">{ln.block}<span class="ll-dim ll-mono"> #{ln.db.segmentId} · {ln.db.status}</span></span>
-              <span class="ll-k">Use types</span><span class="ll-v ll-keys">{ln.db.useTypes?.length ? ln.db.useTypes.join(', ') : '—'}</span>
-              <span class="ll-k">Counted</span><span class="ll-v">{ln.db.currentPodCount} pods on the location</span>
-            </div>
-          {:else}
           <div class="ll-grid">
             <span class="ll-k">Block</span><span class="ll-v">{ln.block}</span>
             <span class="ll-k">Pods</span>
@@ -2094,39 +2285,17 @@
             <span class="ll-k">{ln.tracked ? 'Class' : 'Holds'}</span>
             <span class="ll-v" class:ll-muted={ln.pods === 0}>{(ln.tracked ? ln.classLabel : ln.contents) ?? 'empty'}</span>
             {#if ln.face}<span class="ll-k">{ln.deep === 1 ? 'Top' : 'Face'}</span><span class="ll-v">{ln.face}</span>{/if}
-            {#if ln.db}
-              {@const d = ln.db}
-              <!-- DB mode: the lane's record in location_service. -->
-              <span class="ll-k">Segment</span><span class="ll-v ll-mono">#{d.segmentId}<span class="ll-dim"> · {d.status}</span></span>
-              <span class="ll-k">Zone</span><span class="ll-v">{d.zoneName ?? '—'}<span class="ll-dim ll-mono"> {d.zoneCode ?? ''}</span></span>
-              <span class="ll-k">Keys</span><span class="ll-v ll-keys">{d.policyKeys.length ? d.policyKeys.join(', ') : 'none'}{#if d.policySource === 'segment'} (lane override){/if}</span>
-              <span class="ll-k">Hash</span><span class="ll-v ll-mono" class:ll-muted={!d.hash}>{d.hash ? d.hash.slice(0, 16) + '…' : 'NULL'}</span>
-              <span class="ll-k">Counted</span><span class="ll-v">{d.currentPodCount} pods{#if d.podTypeName}<span class="ll-dim"> · {d.podTypeName}</span>{/if}</span>
-              <span class="ll-k">Prefs</span><span class="ll-v ll-dim">zone {d.zonePreference ?? '—'} · putaway {d.putawayPreference ?? '—'} · pick {d.pickSequence ?? '—'}</span>
-              {#if d.mixedClasses}<span class="ll-k">Check</span><span class="ll-v ll-warn">pallets of different classes</span>{/if}
-            {/if}
           </div>
-          {/if}
         </div>
       {/if}
       {#if hoverInfo.pod}
         {@const pd = hoverInfo.pod}
-        <div class="loc-pod" class:allocated={pd.allocated}>
-          <div class="pd-head"><span class="pd-code" class:pd-mono={!!pd.uuid}>{pd.uuid ? '…' + pd.code : pd.code}</span><span class="pd-status">{pd.status}</span></div>
+        <div class="loc-pod" class:allocated={pd.status === 'ALLOCATED'}>
+          <div class="pd-head"><span class="pd-code">{pd.code}</span><span class="pd-status">{pd.status}</span></div>
           <div class="pd-line">{pd.position}</div>
-          {#if pd.quantities?.length}
-            <div class="pd-qtys">{#each pd.quantities as q}<span class="pd-qty {q.type === 'ALLOCATED' ? 'alloc' : q.type === 'AVAILABLE' ? 'avail' : 'other'}">{q.text}</span>{/each}</div>
-          {/if}
           <div class="pd-line">{pd.product}</div>
-          {#if pd.lines}
-            <!-- DB mode: the real pod's lines, one per row. -->
-            <div class="pd-line pd-dim">{pd.podType ?? 'pod'} · {pd.lines.length} line{pd.lines.length === 1 ? '' : 's'} · {pd.cases}</div>
-            {#each pd.lines as line}<div class="pd-line pd-mono">{line}</div>{/each}
-          {:else}
-            <div class="pd-line">Batch {pd.batches} · {pd.cases}</div>
-          {/if}
+          <div class="pd-line">Batch {pd.batches} · {pd.cases}</div>
           {#if pd.order}<div class="pd-line pd-order">{pd.order}</div>{/if}
-          {#if pd.trail}<div class="pd-line pd-trail">{pd.trail}</div>{/if}
         </div>
       {/if}
     </div>
@@ -2216,6 +2385,60 @@
     </div>
   {/if}
 
+  {#if tourActive && tourStackInfo}
+    {@const si = tourStackInfo}
+    <div class="level-panel" transition:fade={{ duration: 180 }}>
+      <div class="lp-head">
+        <span class="lp-badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="13" width="7" height="7" rx="1" /><rect x="3" y="4" width="7" height="7" rx="1" /><rect x="14" y="13" width="7" height="7" rx="1" /><rect x="14" y="4" width="7" height="7" rx="1" />
+          </svg>
+        </span>
+        <div class="lp-title">
+          <span class="lp-label">Block Stack Level</span>
+          <span class="lp-name">{si.block} · level {si.level} of {si.tiers}</span>
+        </div>
+        <span class="lp-ctx">Lanes {si.lanes.join(' · ')}</span>
+        <span class="lp-count">{si.pods.length} pallet{si.pods.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="lp-stats">
+        <div class="lp-stat">
+          <svg class="lp-sico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 21 7v10l-9 4.5L3 17V7z" /><path d="M3 7l9 4.5L21 7M12 11.5V21" /></svg>
+          <div class="lp-sbody"><span class="lp-sk">Lane layout</span><span class="lp-sv">{si.layout}</span></div>
+        </div>
+        <div class="lp-stat">
+          <svg class="lp-sico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13M7 9l5-5 5 5M5 21h14" /></svg>
+          <div class="lp-sbody"><span class="lp-sk">Elevation</span><span class="lp-sv">{toMetres(si.elevation)} <u>m</u></span></div>
+        </div>
+        <div class="lp-stat">
+          <svg class="lp-sico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+          <div class="lp-sbody"><span class="lp-sk">Stock-mix policy</span><span class="lp-sv">{si.policy ?? 'untracked'}</span></div>
+        </div>
+      </div>
+      <div class="lp-loc">
+        <div class="lp-loc-row lp-loc-head bs-row">
+          <span>Pallet</span>
+          <span>Product · batch</span>
+          <span>Cases</span>
+          <span>Status</span>
+        </div>
+        <div class="lp-loc-body">
+          {#if si.pods.length === 0}
+            <div class="lp-loc-row bs-row"><span class="lp-code">—</span><span class="lp-cellxyz">nothing stacked to this level yet</span><span></span><span></span></div>
+          {/if}
+          {#each si.pods as p (p.code)}
+            <div class="lp-loc-row bs-row">
+              <span class="lp-code">{p.code}</span>
+              <span class="lp-celldim">{p.product}{p.batch ? ` · ${p.batch}` : ''}</span>
+              <span class="lp-cellxyz">{p.cases}</span>
+              <span class="bs-status" class:allocated={p.status === 'ALLOCATED'}>{p.status}{p.order ? ` · ${p.order}` : ''}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if mode === 'walk' && !$flowState.active}
     <div class="aisle-badge" class:touring={tourActive} class:paused={tourPaused} transition:fade={{ duration: 160 }}>
       <div class="ab-head">
@@ -2225,6 +2448,7 @@
       {#key aisleLabel}
         <div class="ab-letter" in:scale={{ duration: 220, start: 0.7 }}>{aisleLabel || '—'}</div>
       {/key}
+      {#if aisleZones}<div class="ab-zones">{aisleZones}</div>{/if}
       <div class="ab-count">{aisleIndex + 1}<span class="ab-sep">/</span>{aisleTotal}</div>
     </div>
   {/if}
@@ -2381,6 +2605,10 @@
     line-height: 1.05;
     color: #f8fafc;
     margin-top: 2px;
+  }
+  .ab-zones {
+    margin-top: 3px; font-size: 9.5px; letter-spacing: 0.6px; white-space: nowrap;
+    color: #94a3b8; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   }
   .ab-count {
     margin-top: 3px;
@@ -2592,6 +2820,10 @@
   }
   .lp-celldim, .lp-cellxyz { font-size: 12px; color: #cbd5e1; white-space: nowrap; }
   .lp-cellxyz { color: #94a3b8; }
+  /* Block Stack Level rows: pallet · product/batch · cases · status. */
+  .bs-row { grid-template-columns: 96px 1fr 56px 150px; }
+  .bs-status { font-size: 10px; font-weight: 700; letter-spacing: 0.6px; color: #38bdf8; white-space: nowrap; }
+  .bs-status.allocated { color: #fbbf24; }
   .lp-loc-body::-webkit-scrollbar { width: 6px; }
   .lp-loc-body::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 3px; }
 
@@ -2678,17 +2910,6 @@
   .loc-pod.allocated .pd-status { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); }
   .pd-line { margin-top: 4px; font-size: 11px; color: #cbd5e1; white-space: nowrap; }
   .pd-order { color: #fcd34d; }
-  /* DB mode rows: ids, hashes and pod lines read best in a monospace face. */
-  .ll-mono, .pd-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0; }
-  .ll-keys { font-weight: 500; color: #cbd5e1; }
-  .ll-warn { color: #fb7185; }
-  .pd-dim { color: #94a3b8; }
-  .pd-trail { color: #c4b5fd; white-space: normal; max-width: 300px; }
-  .pd-qtys { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .pd-qty { padding: 1px 7px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid; white-space: nowrap; }
-  .pd-qty.avail { color: #6ee7b7; border-color: rgba(110, 231, 183, 0.5); }
-  .pd-qty.alloc { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); }
-  .pd-qty.other { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.5); }
   .nav-ui {
     position: absolute; top: 14px; right: 14px; z-index: 10;
     transform: scale(0.82);

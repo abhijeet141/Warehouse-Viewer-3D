@@ -184,8 +184,8 @@ const TAG_STYLE: Record<string, { bg: string; edge: string; fg: string }> = {
 };
 const TAG_DEFAULT = { bg: '#7c3aed', edge: '#4c1d95', fg: '#f5f3ff' };
 
-// A status tag stuck on the face of a pallet: the quantity type and, in DB mode, the
-// quantity behind it — "ALLOCATED", "AVAILABLE 100 UNIT". One texture per distinct text.
+// A status tag stuck on the face of a pallet — "ALLOCATED". One texture per distinct text,
+// coloured by kind.
 export function statusTagTexture(text: string, kind: string): THREE.CanvasTexture {
   return cached(`bs-tag|${kind}|${text}`, () => {
     const style = TAG_STYLE[kind] ?? TAG_DEFAULT;
