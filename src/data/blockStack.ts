@@ -378,9 +378,9 @@ export function describePodPosition(pod: LanePod, cfg: LaneConfig, podCount: num
   const rowWord = row === 1 ? 'front row' : row === cfg.deep ? 'back row' : `row ${row}`;
   // A single-column lane is just a stack: the last pallet in is the top one.
   if (cfg.deep === 1) {
-    const top = pod.index === podCount ? 'Top pallet · ' : '';
+    const top = pod.index === podCount ? 'Top pod · ' : '';
     return `${top}position ${pod.index} of ${cfg.maxPods} · level ${pod.tier + 1} of ${cfg.tiers}`;
   }
-  const face = pod.index === podCount ? 'Face pallet · ' : '';
+  const face = pod.index === podCount ? 'Face pod · ' : '';
   return `${face}position ${pod.index} of ${cfg.maxPods} · ${rowWord}, level ${pod.tier + 1} of ${cfg.tiers}`;
 }

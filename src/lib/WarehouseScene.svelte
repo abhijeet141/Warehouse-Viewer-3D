@@ -707,6 +707,27 @@
     disposeHighlightGroup(g);
   }
 
+  // The cage animate() applies every frame, applied once to a flight's end point too, so a
+  // flight never fights it mid-air (an end point outside the shell stalled the camera on the roof).
+  function cageClampPos(p: THREE.Vector3): THREE.Vector3 {
+    if (p.y < floorY) p.y = floorY;
+    if (shellBounds && showShell) {
+      const PAD = 1500;
+      p.x = Math.min(Math.max(p.x, shellBounds.minX + PAD), shellBounds.maxX - PAD);
+      p.y = Math.min(p.y, shellBounds.eaveH * vScale - 800);
+      p.z = Math.min(Math.max(p.z, shellBounds.minZ * hScale + PAD), shellBounds.maxZ * hScale - PAD);
+    }
+    return p;
+  }
+  function cageClampTarget(t: THREE.Vector3): THREE.Vector3 {
+    if (shellBounds && showShell) {
+      const PAD = 1500;
+      t.x = Math.min(Math.max(t.x, shellBounds.minX + PAD), shellBounds.maxX - PAD);
+      t.z = Math.min(Math.max(t.z, shellBounds.minZ * hScale + PAD), shellBounds.maxZ * hScale - PAD);
+    }
+    return t;
+  }
+
   // Frame a set of data-space boxes: fly the orbit camera to look at their centre
   // from the given direction, far enough back to fit them.
   function focusBoxes(boxes: PodBox[], opts: { dist?: number; dir?: [number, number, number]; duration?: number; aisle?: Segment } = {}) {
@@ -725,10 +746,14 @@
     const dir = new THREE.Vector3(...(opts.dir ?? [-0.45, 0.55, 0.7])).normalize();
     const toPos = center.clone().addScaledVector(dir, dist);
     if (chaseClamp) toPos.z = Math.min(Math.max(toPos.z, chaseClamp.zMin), chaseClamp.zMax);
+    cageClampPos(toPos);
+    cageClampTarget(center);
+    // A long flight gets more time (60 m/s), so a hop across the floor never whips the view.
+    const flight = toPos.distanceTo(perspectiveCamera.position);
     camTween = {
       fromPos: perspectiveCamera.position.clone(), fromTarget: controls.target.clone(),
       toPos, toTarget: center,
-      start: performance.now(), duration: opts.duration ?? 1300, bow: 0,
+      start: performance.now(), duration: Math.max(opts.duration ?? 1300, Math.min(2600, flight / 60)), bow: 0,
     };
   }
 
@@ -748,7 +773,8 @@
       ? p.clone().add(new THREE.Vector3(-6500, 5200, 0)).addScaledVector(h, -3200)
       : p.clone().addScaledVector(h, -9500).addScaledVector(right, 2500).add(new THREE.Vector3(0, 5800, 0));
     if (chaseClamp) toPos.z = Math.min(Math.max(toPos.z, chaseClamp.zMin), chaseClamp.zMax);
-    const toTarget = p.clone().addScaledVector(h, acrossAisle ? 1800 : 2500).setY(1400);
+    cageClampPos(toPos);
+    const toTarget = cageClampTarget(p.clone().addScaledVector(h, acrossAisle ? 1800 : 2500).setY(1400));
     camTween = {
       fromPos: perspectiveCamera.position.clone(), fromTarget: controls.target.clone(),
       toPos, toTarget, start: performance.now(), duration, bow: 0,
@@ -1101,7 +1127,7 @@
       code: pod.code,
       position: describePodPosition(pod, cfg, count),
       product: `${pod.product.code} ${pod.product.name}`,
-      batches: pod.batches.join(' + ') + (pod.batches.length > 1 ? ' (mixed pallet)' : ''),
+      batches: pod.batches.join(' + ') + (pod.batches.length > 1 ? ' (mixed pod)' : ''),
       cases: `${pod.cases} / ${pod.product.casesPerPallet} cases`,
       status: podStatus(pod),
       order: pod.allocation ? `${pod.allocation.order} · ${pod.allocation.job} (job ${pod.allocation.jobStatus})` : null,
@@ -2145,28 +2171,10 @@
       stepCamTween();
       applyOrbitPan(dt);
       controls.update();
-      // Hard cage: keep the camera above the floor and inside the building
-      // shell regardless of rotation, zoom, or arrow-key panning.
-      const p = perspectiveCamera.position;
-      if (p.y < floorY) p.y = floorY;
-      // With the shell hidden the building is open (its walls/roof are one-sided
-      // and cull from outside), so drop the cage entirely and let the camera fly
-      // up and out for a full overview — only the floor holds.
-      if (shellBounds && showShell) {
-        const PAD = 1500;
-        const minX = shellBounds.minX + PAD;
-        const maxX = shellBounds.maxX - PAD;
-        const minZ = shellBounds.minZ * hScale + PAD;
-        const maxZ = shellBounds.maxZ * hScale - PAD;
-        p.x = Math.min(Math.max(p.x, minX), maxX);
-        p.y = Math.min(p.y, shellBounds.eaveH * vScale - 800);
-        p.z = Math.min(Math.max(p.z, minZ), maxZ);
-        // Keep the pan target inside too, so arrow panning can't drag the
-        // pivot through a wall.
-        const tg = controls.target;
-        tg.x = Math.min(Math.max(tg.x, minX), maxX);
-        tg.z = Math.min(Math.max(tg.z, minZ), maxZ);
-      }
+      // Hard cage: the camera stays above the floor and inside the shell whatever the
+      // rotation, zoom or panning; with the shell hidden only the floor holds.
+      cageClampPos(perspectiveCamera.position);
+      cageClampTarget(controls.target); // so arrow panning can't drag the pivot through a wall
     } else {
       // The tour drives the rail itself (and steers directly during aisle
       // turns), so only one of the two runs per frame. Cursor hover is
@@ -2398,13 +2406,13 @@
           <span class="lp-label">Block Stack Level</span>
           <span class="lp-name">{si.block} · level {si.level} of {si.tiers}</span>
         </div>
-        <span class="lp-ctx">Lanes {si.lanes.join(' · ')}</span>
-        <span class="lp-count">{si.pods.length} pallet{si.pods.length === 1 ? '' : 's'}</span>
+        <span class="lp-ctx">Segments {si.lanes.join(' · ')}</span>
+        <span class="lp-count">{si.pods.length} pod{si.pods.length === 1 ? '' : 's'}</span>
       </div>
       <div class="lp-stats">
         <div class="lp-stat">
           <svg class="lp-sico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 21 7v10l-9 4.5L3 17V7z" /><path d="M3 7l9 4.5L21 7M12 11.5V21" /></svg>
-          <div class="lp-sbody"><span class="lp-sk">Lane layout</span><span class="lp-sv">{si.layout}</span></div>
+          <div class="lp-sbody"><span class="lp-sk">Segment layout</span><span class="lp-sv">{si.layout}</span></div>
         </div>
         <div class="lp-stat">
           <svg class="lp-sico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13M7 9l5-5 5 5M5 21h14" /></svg>
@@ -2417,7 +2425,7 @@
       </div>
       <div class="lp-loc">
         <div class="lp-loc-row lp-loc-head bs-row">
-          <span>Pallet</span>
+          <span>Pod</span>
           <span>Product · batch</span>
           <span>Cases</span>
           <span>Status</span>

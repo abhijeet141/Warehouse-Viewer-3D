@@ -183,7 +183,7 @@
     <div class="title">
       <h1>Warehouse 3D View</h1>
       <span class="subtitle">
-        {counts.AISLE} aisles · {counts.BAY} bays · {counts.LEVEL} levels · {counts.SPACE.toLocaleString()} spaces · {counts.BLOCK} block-stack zones · {counts.LANE} lanes
+        {counts.AISLE} aisles · {counts.BAY} bays · {counts.LEVEL} levels · {counts.SPACE.toLocaleString()} spaces · {counts.BLOCK} block-stack zones · {counts.LANE} segments
       </span>
     </div>
 
@@ -286,7 +286,7 @@
         class="toggle flow-btn"
         class:active={flowActive}
         on:click={() => sceneRef?.toggleFlow()}
-        title={flowActive ? 'Close the block-stack walk-through' : 'Walk through FLD-69: policies → putaway → allocation → picking with pallet substitution'}
+        title={flowActive ? 'Close the block-stack walk-through' : 'Walk through FLD-69: policies → putaway → allocation → picking with pod substitution'}
       >
         <svg class="t-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="13" width="7" height="7" rx="1" /><rect x="3" y="4" width="7" height="7" rx="1" /><rect x="14" y="13" width="7" height="7" rx="1" />
@@ -302,7 +302,7 @@
           class="toggle stock-btn"
           class:active={showStock}
           on:click={() => (showStock = !showStock)}
-          title="Show demo stock (pallets &amp; boxes) in the bins"
+          title="Show demo stock (pods &amp; boxes) in the bins"
         >
           <span class="stock-dot"></span>Demo stock <span class="state">{showStock ? 'on' : 'off'}</span>
         </button>
